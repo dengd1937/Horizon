@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1069,6 +1069,8 @@ dependencies = [
     { name = "markdown" },
     { name = "mcp" },
     { name = "openai" },
+    { name = "playwright" },
+    { name = "playwright-stealth" },
     { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
@@ -1103,7 +1105,9 @@ requires-dist = [
     { name = "openai", specifier = ">=1.54.0" },
     { name = "openbb", marker = "extra == 'openbb'", specifier = ">=4.4.0" },
     { name = "openbb-benzinga", marker = "extra == 'openbb'", specifier = ">=1.6.0" },
+    { name = "playwright", specifier = ">=1.60.0" },
     { name = "playwright", marker = "extra == 'twitter'", specifier = ">=1.40.0" },
+    { name = "playwright-stealth", specifier = ">=2.0.3" },
     { name = "playwright-stealth", marker = "extra == 'twitter'", specifier = ">=1.0.0" },
     { name = "pydantic", specifier = ">=2.9.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },

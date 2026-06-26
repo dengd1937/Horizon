@@ -382,6 +382,7 @@ class TwitterPlaywrightScraper(BaseScraper):
                     "tweet_id": tweet_id,
                     "is_retweet": tweet.get("is_retweet", False),
                     "images": tweet.get("images", []),
+                    "category": "ai-news",
                 },
             )
         except Exception as exc:

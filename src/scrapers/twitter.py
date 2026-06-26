@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import os
+import re
+from collections import defaultdict
 from datetime import datetime, timezone
 from html import unescape
 from typing import List, Optional
@@ -17,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 _APIFY_BASE = "https://api.apify.com/v2"
 _POLL_INTERVAL = 3.0
-_MAX_WAIT = 180
+_MAX_WAIT_PER_USER = 90
+_RETRY_DELAY = 5.0
+_RT_MIN_TEXT_LEN = 30
+_RT_PREFIX_RE = re.compile(r"^RT @\w+:\s*")
 
 
 class TwitterScraper(BaseScraper):
@@ -43,15 +48,67 @@ class TwitterScraper(BaseScraper):
             )
             return []
 
-        logger.info(f"Fetching Twitter (Apify) for users: {users}")
+        logger.info(f"Fetching Twitter (Apify) for {len(users)} users, concurrency={self.config.actor_concurrency}")
 
-        run_id, dataset_id = await self._start_run(token, users)
+        semaphore = asyncio.Semaphore(self.config.actor_concurrency)
+        results = await asyncio.gather(
+            *(self._fetch_user(token, user, since, semaphore) for user in users),
+            return_exceptions=True,
+        )
+
+        all_items: List[ContentItem] = []
+        succeeded_users: list[str] = []
+        failed_users: list[str] = []
+
+        for user, result in zip(users, results):
+            if isinstance(result, Exception):
+                logger.error(f"@{user}: unexpected error: {result}")
+                failed_users.append(user)
+            elif result:
+                all_items.extend(result)
+                succeeded_users.append(user)
+                logger.info(f"  @{user}: {len(result)} tweets")
+            else:
+                succeeded_users.append(user)
+                logger.info(f"  @{user}: 0 tweets")
+
+        if failed_users:
+            logger.warning(f"Failed users: {failed_users}")
+        logger.info(
+            f"Twitter raw: {len(all_items)} tweets from "
+            f"{len(succeeded_users)}/{len(users)} users"
+        )
+
+        merged = self._merge_threads(all_items)
+        logger.info(f"Twitter after thread merge: {len(merged)} items")
+        return merged
+
+    async def _fetch_user(
+        self,
+        token: str,
+        username: str,
+        since: datetime,
+        semaphore: asyncio.Semaphore,
+    ) -> List[ContentItem]:
+        async with semaphore:
+            items = await self._run_actor_for_user(token, username, since)
+            if items is not None:
+                return items
+            logger.info(f"  @{username}: retrying after {_RETRY_DELAY}s...")
+            await asyncio.sleep(_RETRY_DELAY)
+            items = await self._run_actor_for_user(token, username, since)
+            return items or []
+
+    async def _run_actor_for_user(
+        self, token: str, username: str, since: datetime
+    ) -> Optional[List[ContentItem]]:
+        run_id, dataset_id = await self._start_run(token, username)
         if not run_id:
-            return []
+            return None
 
         succeeded = await self._wait_for_run(token, run_id)
         if not succeeded:
-            return []
+            return None
 
         raw_items = await self._fetch_dataset(token, dataset_id)
         items = []
@@ -61,16 +118,14 @@ class TwitterScraper(BaseScraper):
             parsed = self._parse_item(raw, since)
             if parsed:
                 items.append(parsed)
-
-        logger.info(f"Fetched {len(items)} tweets via Apify.")
         return items
 
     async def _start_run(
-        self, token: str, users: List[str]
+        self, token: str, username: str
     ) -> tuple[Optional[str], Optional[str]]:
         payload = {
             "source_mode": "profiles",
-            "profile_urls": users,
+            "profile_urls": [username],
             "search_sort": "Latest",
             "max_items": max(100, self.config.fetch_limit),
         }
@@ -81,16 +136,16 @@ class TwitterScraper(BaseScraper):
             data = resp.json()["data"]
             run_id = data["id"]
             dataset_id = data["defaultDatasetId"]
-            logger.debug(f"Started Apify run {run_id}, dataset {dataset_id}")
+            logger.debug(f"Started Apify run for @{username}: {run_id}")
             return run_id, dataset_id
         except Exception as exc:
-            logger.error(f"Failed to start Apify run: {exc}")
+            logger.error(f"Failed to start Apify run for @{username}: {exc}")
             return None, None
 
     async def _wait_for_run(self, token: str, run_id: str) -> bool:
         url = f"{_APIFY_BASE}/actor-runs/{run_id}?token={token}"
         elapsed = 0.0
-        while elapsed < _MAX_WAIT:
+        while elapsed < _MAX_WAIT_PER_USER:
             try:
                 resp = await self.client.get(url, timeout=10.0)
                 resp.raise_for_status()
@@ -104,7 +159,7 @@ class TwitterScraper(BaseScraper):
                 logger.warning(f"Error polling Apify run {run_id}: {exc}")
             await asyncio.sleep(_POLL_INTERVAL)
             elapsed += _POLL_INTERVAL
-        logger.warning(f"Apify run {run_id} timed out after {_MAX_WAIT}s.")
+        logger.warning(f"Apify run {run_id} timed out after {_MAX_WAIT_PER_USER}s.")
         return False
 
     async def _fetch_dataset(self, token: str, dataset_id: str) -> list:
@@ -247,7 +302,6 @@ class TwitterScraper(BaseScraper):
             if not tweet_id:
                 return None
 
-            # Normalize tweet_id: scweet prefixes with "tweet-"
             raw_id = item.get("id") or ""
             numeric_id = (
                 str(raw_id).replace("tweet-", "")
@@ -276,6 +330,41 @@ class TwitterScraper(BaseScraper):
                 return None
             text = unescape(text)
 
+            configured_users = {u.lower() for u in self.config.users}
+
+            # --- RT handling ---
+            is_rt = text.startswith("RT @")
+            if is_rt:
+                body = _RT_PREFIX_RE.sub("", text).strip()
+                if len(body) < _RT_MIN_TEXT_LEN:
+                    logger.debug(f"Dropping short RT from @{screen_name}: {text[:60]}")
+                    return None
+                rt_match = re.match(r"^RT @(\w+):", text)
+                rt_original_author = rt_match.group(1) if rt_match else "unknown"
+                text = body
+                title_body = text[:50].replace("\n", " ").strip()
+                if len(text) > 50:
+                    title_body += "..."
+                title = f"@{screen_name} 转推 @{rt_original_author}: {title_body}"
+            else:
+                # --- Cross-author reply filtering ---
+                is_reply = item.get("is_reply", False)
+                reply_to = item.get("in_reply_to_screen_name") or ""
+                if is_reply and reply_to:
+                    reply_to_lower = reply_to.lower()
+                    if (reply_to_lower != screen_name.lower()
+                            and reply_to_lower not in configured_users):
+                        logger.debug(
+                            f"Dropping cross-author reply from @{screen_name} "
+                            f"to @{reply_to}: {text[:60]}"
+                        )
+                        return None
+
+                title_body = text[:50].replace("\n", " ").strip()
+                if len(text) > 50:
+                    title_body += "..."
+                title = f"@{screen_name}: {title_body}"
+
             url = item.get("url")
             if not url:
                 permalink = item.get("permalink")
@@ -284,14 +373,10 @@ class TwitterScraper(BaseScraper):
                 else:
                     url = f"https://twitter.com/{screen_name}/status/{tweet_id}"
 
-            title_body = text[:50].replace("\n", " ").strip()
-            if len(text) > 50:
-                title_body += "..."
-
             return ContentItem(
                 id=self._generate_id(SourceType.TWITTER.value, "tweet", numeric_id),
                 source_type=SourceType.TWITTER,
-                title=f"@{screen_name}: {title_body}",
+                title=title,
                 url=url,
                 content=text,
                 author=author,
@@ -304,10 +389,55 @@ class TwitterScraper(BaseScraper):
                     "reply_count": item.get("reply_count", 0),
                     "view_count": item.get("view_count"),
                     "is_reply": item.get("is_reply", False),
+                    "is_retweet": is_rt,
                     "in_reply_to_status_id": item.get("in_reply_to_status_id"),
                     "in_reply_to_screen_name": item.get("in_reply_to_screen_name"),
+                    "category": "ai-news",
                 },
             )
         except Exception as exc:
             logger.debug(f"Failed to parse tweet: {exc}")
             return None
+
+    @staticmethod
+    def _merge_threads(items: List[ContentItem]) -> List[ContentItem]:
+        """Merge same-author reply chains (threads) into single items."""
+        by_conv: dict[str, list[ContentItem]] = defaultdict(list)
+        for item in items:
+            conv_id = item.metadata.get("conversation_id", "")
+            by_conv[conv_id].append(item)
+
+        result: list[ContentItem] = []
+        for conv_id, group in by_conv.items():
+            author_items: dict[str, list[ContentItem]] = defaultdict(list)
+            for it in group:
+                author_items[(it.author or "").lower()].append(it)
+
+            for author, author_group in author_items.items():
+                if len(author_group) == 1:
+                    result.append(author_group[0])
+                    continue
+
+                author_group.sort(key=lambda x: x.published_at)
+                head = author_group[0]
+                tail_texts = [it.content for it in author_group[1:] if it.content]
+                if tail_texts:
+                    head.content = (head.content or "") + "\n\n" + "\n\n".join(tail_texts)
+
+                for it in author_group[1:]:
+                    head.metadata["favorite_count"] = (
+                        head.metadata.get("favorite_count", 0)
+                        + it.metadata.get("favorite_count", 0)
+                    )
+                    head.metadata["retweet_count"] = (
+                        head.metadata.get("retweet_count", 0)
+                        + it.metadata.get("retweet_count", 0)
+                    )
+
+                head.metadata["thread_length"] = len(author_group)
+                result.append(head)
+                logger.debug(
+                    f"Merged thread {conv_id}: {len(author_group)} tweets by @{author}"
+                )
+
+        return result

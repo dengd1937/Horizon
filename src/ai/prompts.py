@@ -57,6 +57,12 @@ Consider:
 - Relevance to software engineering, AI/ML, and systems research
 - Community discussion quality: insightful comments, diverse viewpoints, and debates increase value
 - Engagement signals: high upvotes/favorites with substantive discussion indicate community-validated importance
+
+Special guidance for Twitter/social media content:
+- Do NOT penalize tweets for being short. Score based on INFORMATION VALUE, not text length.
+- Tweets from known AI researchers, labs, or KOLs announcing new models, papers, tools, or industry developments should score 7+ if the news itself is significant.
+- Retweets curating high-quality content are valuable discovery signals — score based on the original content's importance.
+- A single tweet breaking major news (e.g. model release, funding, acquisition, policy change) can be 9-10.
 """
 
 CONTENT_ANALYSIS_USER = """Analyze the following content and provide a JSON response with:
