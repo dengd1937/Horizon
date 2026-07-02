@@ -278,32 +278,6 @@ All sources are configured under the top-level `sources` key in `config.json`.
 }
 ```
 
-### Telegram
-
-Telegram scraping uses the public web preview at `https://t.me/s/<channel>`, so no API key is required. Only public channels are supported.
-
-```json
-{
-  "sources": {
-    "telegram": {
-      "enabled": true,
-      "channels": [
-        {
-          "channel": "zaihuapd",
-          "enabled": true,
-          "fetch_limit": 20
-        }
-      ]
-    }
-  }
-}
-```
-
-- `enabled` — enable or disable Telegram fetching globally
-- `channels` — list of public Telegram channels to monitor
-- `channel` — Telegram channel username only, without `@` or the full `https://t.me/` URL
-- `fetch_limit` — maximum number of recent messages to inspect per channel per run (default: `20`)
-
 ### Twitter
 
 Requires an [Apify](https://apify.com) account. Set `APIFY_TOKEN` in your `.env` file. The free tier includes $5/month of credit, enough for roughly 20,000 tweets.
