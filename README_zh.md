@@ -70,13 +70,13 @@
 
 ## 为什么需要 Horizon？
 
-好新闻分散在各处，坏信息却源源不断。Horizon 为你先完成第一轮筛选：从 Hacker News、Reddit、Telegram、RSS、Twitter/X、GitHub 和 OpenBB 抓取内容，合并重复新闻，用 AI 打分过滤，并为重要内容补充背景解释和社区讨论。
+好新闻分散在各处，坏信息却源源不断。Horizon 为你先完成第一轮筛选：从 Hacker News、Reddit、RSS、Twitter/X、GitHub 和 OpenBB 抓取内容，合并重复新闻，用 AI 打分过滤，并为重要内容补充背景解释和社区讨论。
 
 但 Horizon 不只是又一个摘要工具。AI 很擅长降低噪声，但新闻仍然需要人的品味：你信任哪些信息源，哪些评论改变了你对事件的理解，哪些小众来源值得被更多人看见。Horizon 通过可定制的信息源、筛选标准、模型、语言、分发方式、评论摘要和社区信息源官网，把这层“人味”保留下来。
 
 ## 功能特性
 
-- **📡 关注你的信息源** — 将 Hacker News、RSS、Reddit、Telegram、Twitter/X、GitHub Release / 用户动态，以及 OpenBB 金融新闻观察列表纳入同一条 pipeline
+- **📡 关注你的信息源** — 将 Hacker News、RSS、Reddit、Twitter/X、GitHub Release / 用户动态，以及 OpenBB 金融新闻观察列表纳入同一条 pipeline
 - **🤖 把噪声变成阅读清单** — 使用 Claude、GPT、Gemini、DeepSeek、豆包、MiniMax 或任意 OpenAI 兼容 API，为每条内容评分 0-10
 - **🔗 合并重复新闻** — 在生成日报前自动合并来自不同平台的相同故事
 - **🔍 补全背景知识** — 为陌生概念、公司、项目和技术术语补充网络搜索得到的背景解释
@@ -116,7 +116,6 @@ flowchart LR
          rss["📡 RSS"]
          hn["📰 Hacker News"]
          reddit["💬 Reddit"]
-         telegram["✈️ Telegram"]
          twitter["🐦 Twitter / X"]
          github["🐙 GitHub"]
          openbb["💹 OpenBB"]
@@ -140,7 +139,6 @@ flowchart LR
      rss --> fetch
      hn --> fetch
      reddit --> fetch
-      telegram --> fetch
       twitter --> fetch
       github --> fetch
       openbb --> fetch
@@ -156,7 +154,7 @@ flowchart LR
     summary --> mcp
 
     class config config
-    class rss,hn,reddit,telegram,twitter,github,openbb source
+    class rss,hn,reddit,twitter,github,openbb source
     class fetch,dedup,score,enrich,summary process
     class site,email,webhook,mcp output
 ```
@@ -328,7 +326,6 @@ Horizon 非常适合作为 **GitHub Actions** 定时任务运行。查看 [`.git
 | **Hacker News** | 按分数排序的热门文章 | 支持（前 N 条评论） |
 | **RSS / Atom** | 任意 RSS 或 Atom 订阅源 | — |
 | **Reddit** | Subreddit 帖子 + 用户动态 | 支持（前 N 条评论） |
-| **Telegram** | 公开频道消息 | — |
 | **Twitter / X** | 特定用户的推文 | 支持（前 N 条回复） |
 | **GitHub** | 用户动态 & 仓库 Release | — |
 | **OpenBB** | 按观察列表 / provider 抓取金融公司新闻 | — |
@@ -374,7 +371,7 @@ Horizon 已经支持完整的日报流程：多源抓取、AI 打分、去重、
 
 想把有价值的信息源分享给 Horizon 社区？请直接前往 **[horizon1123.top](https://horizon1123.top)** 提交。
 
-欢迎提交：你所在领域里优质的小众 RSS 发现、活跃 subreddit 的趋势、值得关注的 GitHub 动态，或 Telegram 频道精选内容。
+欢迎提交：你所在领域里优质的小众 RSS 发现、活跃 subreddit 的趋势，或值得关注的 GitHub 动态。
 
 ## 鸣谢
 

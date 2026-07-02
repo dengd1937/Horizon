@@ -17,7 +17,6 @@ from .scrapers.github import GitHubScraper
 from .scrapers.hackernews import HackerNewsScraper
 from .scrapers.rss import RSSScraper
 from .scrapers.reddit import RedditScraper
-from .scrapers.telegram import TelegramScraper
 from .scrapers.twitter import TwitterScraper
 from .scrapers.twitter_playwright import TwitterPlaywrightScraper
 from .scrapers.openbb import OpenBBScraper
@@ -275,11 +274,6 @@ class HorizonOrchestrator:
             if self.config.sources.reddit.enabled:
                 reddit_scraper = RedditScraper(self.config.sources.reddit, client)
                 tasks.append(self._fetch_with_progress("Reddit", reddit_scraper, since))
-
-            # Telegram
-            if self.config.sources.telegram.enabled:
-                telegram_scraper = TelegramScraper(self.config.sources.telegram, client)
-                tasks.append(self._fetch_with_progress("Telegram", telegram_scraper, since))
 
             # Twitter (Apify or Playwright mode)
             if self.config.sources.twitter and self.config.sources.twitter.enabled:

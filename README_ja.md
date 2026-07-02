@@ -70,13 +70,13 @@
 
 ## なぜHorizonなのか？
 
-良いニュースは散らばっていて、悪いニュースは尽きることがありません。Horizonは、Hacker News、Reddit、Telegram、RSS、GitHubに対する個人的な一次フィルタを提供します。記事を取得・重複排除・スコアリング・フィルタリングし、背景情報やコミュニティでの議論を付加します。
+良いニュースは散らばっていて、悪いニュースは尽きることがありません。Horizonは、Hacker News、Reddit、RSS、GitHubに対する個人的な一次フィルタを提供します。記事を取得・重複排除・スコアリング・フィルタリングし、背景情報やコミュニティでの議論を付加します。
 
 しかしHorizonは単なる要約ツールではありません。AIはノイズを減らすのが得意ですが、ニュースには依然として人間の感性が必要です。信頼できる情報源、記事の読み方を変えるコメント、そして人だけが共有できる隠れた逸品です。Horizonは、カスタマイズ可能な情報源・しきい値・モデル・言語・配信チャネル・コメント要約・コミュニティ情報源ハブによって、その人間のレイヤーをループに組み込み続けます。
 
 ## 機能
 
-- **📡 自分だけの情報源を監視** — Hacker News、RSS、Reddit、Telegram、Twitter/X、GitHubのリリースやユーザーアクティビティ、OpenBBの金融ニュースウォッチリストを1つのパイプラインで追跡
+- **📡 自分だけの情報源を監視** — Hacker News、RSS、Reddit、Twitter/X、GitHubのリリースやユーザーアクティビティ、OpenBBの金融ニュースウォッチリストを1つのパイプラインで追跡
 - **🤖 ノイズを読むべきリストに変換** — Claude、GPT、Gemini、DeepSeek、Doubao、MiniMax、Ollama、またはOpenAI互換のあらゆるAPIで各記事を0〜10点でスコアリング
 - **🔗 重複した記事を統合** — ブリーフィングに届く前に、プラットフォームをまたいで同じ記事を重複排除
 - **🔍 背景を理解する** — 馴染みのない概念・企業・プロジェクト・専門用語について、Webで調べた背景情報を付加
@@ -116,7 +116,6 @@ flowchart LR
         rss["📡 RSS"]
         hn["📰 Hacker News"]
         reddit["💬 Reddit"]
-        telegram["✈️ Telegram"]
         twitter["🐦 Twitter / X"]
         github["🐙 GitHub"]
         openbb["💹 OpenBB"]
@@ -140,7 +139,6 @@ flowchart LR
     rss --> fetch
     hn --> fetch
     reddit --> fetch
-    telegram --> fetch
     twitter --> fetch
     github --> fetch
     openbb --> fetch
@@ -156,7 +154,7 @@ flowchart LR
     summary --> mcp
 
     class config config
-    class rss,hn,reddit,telegram,twitter,github,openbb source
+    class rss,hn,reddit,twitter,github,openbb source
     class fetch,dedup,score,enrich,summary process
     class site,email,webhook,mcp output
 ```
@@ -336,7 +334,6 @@ Horizonは**GitHub Actions**のcronジョブとして最適に動作します。
 | **Hacker News** | スコア順のトップ記事 | あり（上位N件のコメント） |
 | **RSS / Atom** | 任意のRSSまたはAtomフィード | — |
 | **Reddit** | サブレディット + ユーザー投稿 | あり（上位N件のコメント） |
-| **Telegram** | 公開チャンネルのメッセージ | — |
 | **Twitter / X** | 特定ユーザーのツイート | あり（上位N件の返信） |
 | **GitHub** | ユーザーイベント & リポジトリのリリース | — |
 | **OpenBB** | ウォッチリスト/プロバイダー別の企業金融ニュース | — |

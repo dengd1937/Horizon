@@ -16,7 +16,6 @@ from ..models import (
     AIConfig, AIProvider, AI_PROVIDER_DEFAULTS, Config, FilteringConfig, SourcesConfig,
     GitHubSourceConfig, HackerNewsConfig, RSSSourceConfig,
     RedditConfig, RedditSubredditConfig, RedditUserConfig,
-    TelegramConfig, TelegramChannelConfig,
 )
 from ..storage.manager import StorageManager
 from .presets import load_presets, match_sources
@@ -205,7 +204,6 @@ def build_config(
     rss_sources = []
     reddit_subreddits = []
     reddit_users = []
-    telegram_channels = []
     hn_enabled = False
 
     for src in selected_sources:
@@ -243,11 +241,6 @@ def build_config(
             reddit_users.append(RedditUserConfig(
                 username=cfg.get("username", ""),
             ))
-        elif src_type == "telegram":
-            telegram_channels.append(TelegramChannelConfig(
-                channel=cfg.get("channel", ""),
-                fetch_limit=cfg.get("fetch_limit", 20),
-            ))
         elif src_type == "hackernews":
             hn_enabled = True
 
@@ -265,17 +258,11 @@ def build_config(
         fetch_comments=10,
     )
 
-    telegram_config = TelegramConfig(
-        enabled=bool(telegram_channels),
-        channels=telegram_channels,
-    )
-
     sources = SourcesConfig(
         github=github_sources,
         hackernews=hn_config,
         rss=rss_sources,
         reddit=reddit_config,
-        telegram=telegram_config,
     )
 
     filtering = FilteringConfig(
@@ -449,6 +436,4 @@ def _count_sources(config: Config) -> int:
     if config.sources.reddit.enabled:
         count += len(config.sources.reddit.subreddits or [])
         count += len(config.sources.reddit.users or [])
-    if config.sources.telegram.enabled:
-        count += len(config.sources.telegram.channels or [])
     return count

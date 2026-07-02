@@ -21,7 +21,6 @@ VALID_SOURCES = {
     "hackernews",
     "rss",
     "reddit",
-    "telegram",
     "twitter",
     "openbb",
 }
@@ -206,9 +205,6 @@ def apply_source_filter(
         clone.sources.reddit.enabled = False
         clone.sources.reddit.subreddits = []
         clone.sources.reddit.users = []
-    if "telegram" not in wanted:
-        clone.sources.telegram.enabled = False
-        clone.sources.telegram.channels = []
     if "twitter" not in wanted and getattr(clone.sources, "twitter", None):
         clone.sources.twitter.enabled = False
         clone.sources.twitter.users = []
@@ -231,8 +227,6 @@ def get_enabled_sources(config: Any) -> list[str]:
         enabled.append("rss")
     if getattr(config.sources.reddit, "enabled", False):
         enabled.append("reddit")
-    if getattr(config.sources.telegram, "enabled", False):
-        enabled.append("telegram")
     if getattr(getattr(config.sources, "twitter", None), "enabled", False):
         enabled.append("twitter")
     if getattr(getattr(config.sources, "openbb", None), "enabled", False):

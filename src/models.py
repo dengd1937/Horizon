@@ -13,7 +13,6 @@ class SourceType(str, Enum):
     HACKERNEWS = "hackernews"
     RSS = "rss"
     REDDIT = "reddit"
-    TELEGRAM = "telegram"
     TWITTER = "twitter"
     OPENBB = "openbb"
     OSSINSIGHT = "ossinsight"
@@ -171,21 +170,6 @@ class RedditConfig(BaseModel):
     fetch_comments: int = 5  # top comments per post, 0 to disable
 
 
-class TelegramChannelConfig(BaseModel):
-    """Configuration for monitoring a specific Telegram channel."""
-
-    channel: str  # channel username, e.g. "zaihuapd"
-    enabled: bool = True
-    fetch_limit: int = 20
-
-
-class TelegramConfig(BaseModel):
-    """Telegram source configuration."""
-
-    enabled: bool = True
-    channels: List[TelegramChannelConfig] = Field(default_factory=list)
-
-
 class TwitterConfig(BaseModel):
     """Twitter source configuration.
 
@@ -274,7 +258,6 @@ class SourcesConfig(BaseModel):
     hackernews: HackerNewsConfig = Field(default_factory=HackerNewsConfig)
     rss: List[RSSSourceConfig] = Field(default_factory=list)
     reddit: RedditConfig = Field(default_factory=RedditConfig)
-    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     twitter: Optional[TwitterConfig] = None
     openbb: Optional[OpenBBConfig] = None
     ossinsight: OSSInsightConfig = Field(default_factory=OSSInsightConfig)

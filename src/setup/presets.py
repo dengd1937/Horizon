@@ -293,7 +293,5 @@ def _source_unique_key(source: Dict) -> str:
         return f"github_user:{cfg.get('username', '')}"
     elif src_type == "github_repo":
         return f"github_repo:{cfg.get('owner', '')}/{cfg.get('repo', '')}"
-    elif src_type == "telegram":
-        return f"telegram:{cfg.get('channel', '')}"
     else:
         return f"{src_type}:{json.dumps(cfg, sort_keys=True)}"
