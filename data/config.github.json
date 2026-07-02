@@ -22,19 +22,19 @@
       {
         "name": "TechCrunch AI",
         "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
-        "enabled": true,
+        "enabled": false,
         "category": "ai-news"
       },
       {
         "name": "The Verge AI",
         "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
-        "enabled": true,
+        "enabled": false,
         "category": "ai-news"
       },
       {
         "name": "Ars Technica AI",
         "url": "https://arstechnica.com/ai/feed/",
-        "enabled": true,
+        "enabled": false,
         "category": "ai-news"
       }
     ],
@@ -59,7 +59,7 @@
         "Alibaba_Qwen",
         "deepseek_ai"
       ],
-      "fetch_limit": 10,
+      "fetch_limit": 20,
       "fetch_reply_text": true,
       "max_replies_per_tweet": 3,
       "max_tweets_to_expand": 10,
