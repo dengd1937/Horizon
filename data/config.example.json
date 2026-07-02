@@ -83,7 +83,8 @@
       "fetch_reply_text": false,
       "max_replies_per_tweet": 3,
       "max_tweets_to_expand": 10,
-      "reply_min_likes": 5
+      "reply_min_likes": 5,
+      "qrt_comment_min_chars": 10
     },
     "openbb": {
       "enabled": false,

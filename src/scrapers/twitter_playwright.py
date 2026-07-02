@@ -1,12 +1,12 @@
 """Twitter scraper using Playwright + Cookie (replaces Apify)."""
 
 import asyncio
-import glob
 import hashlib
 import json
 import logging
 import os
 import random
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -59,6 +59,177 @@ def _load_browser_cookies(file_path: str) -> list[dict]:
             pc["expires"] = c["expirationDate"]
         pw_cookies.append(pc)
     return pw_cookies
+
+
+_URL_RE = re.compile(r"https?://\S+")
+_MENTION_RE = re.compile(r"@\w+")
+_WORD_RE = re.compile(r"\w")
+_RT_PREFIX_RE = re.compile(r"^RT @(\w+):\s*")
+
+
+def _visible_char_count(text: str) -> int:
+    """Count meaningful characters after stripping URLs and @mentions.
+
+    Only word characters are counted (CJK included), so emoji,
+    punctuation and whitespace never push a comment over the threshold.
+    """
+    cleaned = _MENTION_RE.sub("", _URL_RE.sub("", text))
+    return len(_WORD_RE.findall(cleaned))
+
+
+def _head(text: str, limit: int = 50) -> str:
+    body = text[:limit].replace("\n", " ").strip()
+    if len(text) > limit:
+        body += "..."
+    return body
+
+
+def _format_quote_block(author: str, text: str) -> str:
+    lines = (text or "").strip().split("\n")
+    block = [f"> 引用 @{author or 'unknown'}: {lines[0]}"]
+    block.extend(f"> {line}" for line in lines[1:])
+    return "\n".join(block)
+
+
+def _unwrap_tweet_result(result) -> dict:
+    """Unwrap TweetWithVisibilityResults wrappers; tolerate missing data."""
+    if not isinstance(result, dict):
+        return {}
+    if result.get("__typename") == "TweetWithVisibilityResults":
+        inner = result.get("tweet")
+        return inner if isinstance(inner, dict) else {}
+    return result
+
+
+def _resolve_full_text(tweet_result: dict) -> str:
+    """Prefer the untruncated note_tweet (long-form) text over legacy.full_text."""
+    note_text = (
+        (tweet_result.get("note_tweet") or {})
+        .get("note_tweet_results", {})
+        .get("result", {})
+        .get("text")
+    )
+    return note_text or (tweet_result.get("legacy") or {}).get("full_text", "")
+
+
+def _resolve_screen_name(tweet_result: dict) -> str:
+    user = (tweet_result.get("core") or {}).get("user_results", {}).get("result", {})
+    return (
+        (user.get("core") or {}).get("screen_name")
+        or (user.get("legacy") or {}).get("screen_name")
+        or ""
+    )
+
+
+def _resolve_images(legacy: dict) -> list[str]:
+    media = (
+        (legacy.get("extended_entities") or {}).get("media", [])
+        or (legacy.get("entities") or {}).get("media", [])
+    )
+    return [
+        m["media_url_https"]
+        for m in media
+        if m.get("type") == "photo" and m.get("media_url_https")
+    ]
+
+
+def _summarize_embedded(container) -> Optional[dict]:
+    """Compact {tweet_id, author, text} view of an embedded quoted/retweeted tweet."""
+    tweet_result = _unwrap_tweet_result((container or {}).get("result"))
+    rest_id = tweet_result.get("rest_id")
+    if not rest_id:
+        return None
+    return {
+        "tweet_id": str(rest_id),
+        "author": _resolve_screen_name(tweet_result),
+        "text": _resolve_full_text(tweet_result),
+    }
+
+
+def _build_raw_tweet(tweet_result: dict) -> Optional[dict]:
+    """Flatten one GraphQL tweet result into the raw dict consumed by _parse_tweet."""
+    legacy = tweet_result.get("legacy") or {}
+    rest_id = tweet_result.get("rest_id")
+    if not rest_id:
+        return None
+
+    text = _resolve_full_text(tweet_result)
+    created_at = legacy.get("created_at", "")
+    try:
+        dt_iso = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y").isoformat()
+    except (ValueError, TypeError):
+        dt_iso = created_at
+
+    rt_result = _unwrap_tweet_result(
+        (legacy.get("retweeted_status_result") or {}).get("result")
+    )
+    rt_original: Optional[dict] = None
+    if rt_result.get("rest_id"):
+        rt_original = {
+            "tweet_id": str(rt_result["rest_id"]),
+            "author": _resolve_screen_name(rt_result),
+            "text": _resolve_full_text(rt_result),
+            "quoted": _summarize_embedded(rt_result.get("quoted_status_result")),
+        }
+    is_retweet = bool(
+        rt_original or legacy.get("retweeted_status_id_str") or text.startswith("RT @")
+    )
+
+    quoted = None if is_retweet else _summarize_embedded(tweet_result.get("quoted_status_result"))
+    quoted_id = ""
+    if not is_retweet:
+        quoted_id = str(legacy.get("quoted_status_id_str") or (quoted or {}).get("tweet_id") or "")
+    is_quote = bool(not is_retweet and (legacy.get("is_quote_status") or quoted_id or quoted))
+
+    return {
+        "tweet_id": str(rest_id),
+        "author": _resolve_screen_name(tweet_result),
+        "text": text,
+        "datetime_raw": created_at,
+        "datetime": dt_iso,
+        "images": _resolve_images(legacy),
+        "is_retweet": is_retweet,
+        "rt_original": rt_original,
+        "is_quote": is_quote,
+        "quoted_tweet_id": quoted_id,
+        "quoted": quoted,
+    }
+
+
+def extract_timeline_tweets(data: dict, username: str) -> list[dict]:
+    """Collect timeline tweets from a UserTweets GraphQL payload.
+
+    Recursion stops once a tweet object is consumed, so quoted/retweeted
+    originals embedded inside it never surface as standalone tweets.
+    Tweets authored by other accounts (injected/promoted content) are
+    skipped; tweets with unreadable author info are kept.
+    """
+    tweets: list[dict] = []
+    expected = username.lower()
+
+    def walk(obj) -> None:
+        if isinstance(obj, dict):
+            legacy = obj.get("legacy")
+            if obj.get("rest_id") and isinstance(legacy, dict) and "full_text" in legacy:
+                raw = _build_raw_tweet(obj)
+                if raw:
+                    author = raw["author"]
+                    if author and author.lower() != expected:
+                        logger.debug(
+                            "Skipping foreign tweet %s by @%s on @%s timeline",
+                            raw["tweet_id"], author, username,
+                        )
+                    else:
+                        tweets.append(raw)
+                return
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for entry in obj:
+                walk(entry)
+
+    walk(data)
+    return tweets
 
 
 class TwitterPlaywrightScraper(BaseScraper):
@@ -194,8 +365,46 @@ class TwitterPlaywrightScraper(BaseScraper):
                 await ctx.close()
             await browser.close()
 
-        logger.info("Fetched %d tweets via Playwright.", len(all_items))
-        return all_items
+        deduped = self._drop_absorbed_originals(all_items)
+        if len(deduped) < len(all_items):
+            logger.info(
+                "Dropped %d standalone originals already embedded in QRT/RT items",
+                len(all_items) - len(deduped),
+            )
+        logger.info("Fetched %d tweets via Playwright.", len(deduped))
+        return deduped
+
+    @staticmethod
+    def _drop_absorbed_originals(items: List[ContentItem]) -> List[ContentItem]:
+        """Drop standalone tweets already embedded in another item's QRT/RT block.
+
+        When a monitored account's tweet is quoted/retweeted by another
+        monitored account, the QRT/RT item is the information superset
+        (comment + original), so the standalone original is redundant.
+        """
+        absorbed: dict[str, str] = {}
+        for item in items:
+            own_id = str(item.metadata.get("tweet_id", ""))
+            for key in ("quoted_tweet_id", "rt_original_id"):
+                ref = str(item.metadata.get(key) or "")
+                if ref and ref != own_id:
+                    absorbed[ref] = own_id
+
+        if not absorbed:
+            return items
+
+        kept: List[ContentItem] = []
+        for item in items:
+            own_id = str(item.metadata.get("tweet_id", ""))
+            if own_id in absorbed:
+                logger.info(
+                    "Dropping standalone tweet %s (embedded in %s)",
+                    own_id,
+                    absorbed[own_id],
+                )
+                continue
+            kept.append(item)
+        return kept
 
     async def _scrape_user(self, ctx, username: str, since: datetime) -> Optional[list[dict]]:
         """Scrape a single user's tweets via GraphQL interception."""
@@ -207,43 +416,7 @@ class TwitterPlaywrightScraper(BaseScraper):
                 return
             try:
                 data = await response.json()
-
-                def extract_tweets(obj):
-                    if isinstance(obj, dict):
-                        if obj.get("rest_id") and obj.get("legacy"):
-                            legacy = obj["legacy"]
-                            media_entities = (
-                                legacy.get("extended_entities", {}).get("media", [])
-                                or legacy.get("entities", {}).get("media", [])
-                            )
-                            images = [
-                                m["media_url_https"]
-                                for m in media_entities
-                                if m.get("type") == "photo" and m.get("media_url_https")
-                            ]
-                            tweet = {
-                                "tweet_id": obj["rest_id"],
-                                "text": legacy.get("full_text", ""),
-                                "datetime_raw": legacy.get("created_at", ""),
-                                "is_retweet": (
-                                    "retweeted_status_result" in obj.get("core", {})
-                                    or "retweeted_status_id_str" in legacy
-                                ),
-                                "images": images,
-                            }
-                            try:
-                                dt = datetime.strptime(tweet["datetime_raw"], "%a %b %d %H:%M:%S %z %Y")
-                                tweet["datetime"] = dt.isoformat()
-                            except (ValueError, TypeError):
-                                tweet["datetime"] = tweet["datetime_raw"]
-                            graphql_tweets.append(tweet)
-                        for v in obj.values():
-                            extract_tweets(v)
-                    elif isinstance(obj, list):
-                        for item in obj:
-                            extract_tweets(item)
-
-                extract_tweets(data)
+                graphql_tweets.extend(extract_timeline_tweets(data, username))
             except Exception as exc:
                 logger.debug("GraphQL parse error: %s", exc)
 
@@ -348,14 +521,17 @@ class TwitterPlaywrightScraper(BaseScraper):
             await page.close()
 
     def _parse_tweet(self, tweet: dict, username: str) -> Optional[ContentItem]:
-        """Convert raw tweet dict to Horizon ContentItem."""
+        """Convert raw tweet dict to Horizon ContentItem.
+
+        QRT/RT rules:
+        - Pure RT: content is the retweeted original's full text.
+        - QRT with a substantive comment (>= qrt_comment_min_chars visible
+          chars): comment plus the quoted original as a "> 引用 @..." block.
+        - QRT with a short comment: degrades to a plain repost of the original.
+        """
         try:
             tweet_id = str(tweet.get("tweet_id", ""))
             if not tweet_id:
-                return None
-
-            text = tweet.get("text", "")
-            if not text:
                 return None
 
             created_at_raw = tweet.get("datetime", "")
@@ -366,24 +542,83 @@ class TwitterPlaywrightScraper(BaseScraper):
             except (ValueError, TypeError):
                 return None
 
-            title_body = text[:50].replace("\n", " ").strip()
-            if len(text) > 50:
-                title_body += "..."
+            text = tweet.get("text", "")
+            metadata: dict = {
+                "tweet_id": tweet_id,
+                "is_retweet": bool(tweet.get("is_retweet", False)),
+                "is_quote": bool(tweet.get("is_quote", False)),
+                "images": tweet.get("images", []),
+                "category": "ai-news",
+            }
+
+            if tweet.get("is_retweet"):
+                original = tweet.get("rt_original") or {}
+                orig_text = (original.get("text") or _RT_PREFIX_RE.sub("", text)).strip()
+                if not orig_text:
+                    return None
+                prefix_match = _RT_PREFIX_RE.match(text)
+                orig_author = original.get("author") or (
+                    prefix_match.group(1) if prefix_match else "unknown"
+                )
+                content = orig_text
+                nested = original.get("quoted")
+                if nested:
+                    content += "\n\n" + _format_quote_block(
+                        nested.get("author", ""), nested.get("text", "")
+                    )
+                    metadata["quoted_tweet_id"] = nested.get("tweet_id", "")
+                    metadata["quoted_author"] = nested.get("author", "")
+                title = f"@{username} 转推 @{orig_author}: {_head(orig_text)}"
+                metadata["rt_original_id"] = original.get("tweet_id", "")
+                metadata["rt_original_author"] = orig_author
+            elif tweet.get("is_quote"):
+                comment = text.strip()
+                quoted = tweet.get("quoted")
+                quoted_text = ((quoted or {}).get("text") or "").strip()
+                substantive = (
+                    _visible_char_count(comment)
+                    >= self.twitter_config.qrt_comment_min_chars
+                )
+                metadata["quoted_tweet_id"] = tweet.get("quoted_tweet_id", "")
+                if quoted_text:
+                    metadata["quoted_author"] = quoted.get("author", "")
+                    if substantive:
+                        content = comment + "\n\n" + _format_quote_block(
+                            quoted.get("author", ""), quoted_text
+                        )
+                        title = f"@{username}: {_head(comment)}"
+                    else:
+                        content = quoted_text
+                        title = (
+                            f"@{username} 转推 @{quoted.get('author') or 'unknown'}: "
+                            f"{_head(quoted_text)}"
+                        )
+                else:
+                    # Quoted tweet unavailable (deleted/protected/empty)
+                    if not substantive:
+                        logger.debug(
+                            "Dropping QRT %s: short comment, quoted tweet unavailable",
+                            tweet_id,
+                        )
+                        return None
+                    content = comment + "\n\n> 引用推文不可用"
+                    title = f"@{username}: {_head(comment)}"
+            else:
+                body = text.strip()
+                if not body:
+                    return None
+                content = body
+                title = f"@{username}: {_head(body)}"
 
             return ContentItem(
                 id=self._generate_id(SourceType.TWITTER.value, "tweet", tweet_id),
                 source_type=SourceType.TWITTER,
-                title=f"@{username}: {title_body}",
+                title=title,
                 url=f"https://x.com/{username}/status/{tweet_id}",
-                content=text,
+                content=content,
                 author=username,
                 published_at=published_at,
-                metadata={
-                    "tweet_id": tweet_id,
-                    "is_retweet": tweet.get("is_retweet", False),
-                    "images": tweet.get("images", []),
-                    "category": "ai-news",
-                },
+                metadata=metadata,
             )
         except Exception as exc:
             logger.debug("Failed to parse tweet: %s", exc)

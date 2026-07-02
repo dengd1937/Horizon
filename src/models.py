@@ -209,6 +209,8 @@ class TwitterConfig(BaseModel):
     # Playwright settings (used when mode == "playwright")
     cookie_dir: str = "data"
     cookie_file_pattern: str = "x_cookies_*.json"
+    # QRT comments with fewer visible chars than this degrade to plain reposts
+    qrt_comment_min_chars: int = 10
 
 
 class OpenBBWatchlist(BaseModel):
