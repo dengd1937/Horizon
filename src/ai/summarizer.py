@@ -23,7 +23,7 @@ LABELS = {
         "source": "Source",
         "background": "Background",
         "discussion": "Discussion",
-        "references": "References",
+        "original": "Original",
         "tags": "Tags",
         "selected_items": "From {total} items, {selected} important content pieces were selected",
         "empty_analyzed": "Analyzed {total} items, but none met the importance threshold.",
@@ -43,7 +43,7 @@ LABELS = {
         "source": "来源",
         "background": "背景",
         "discussion": "社区讨论",
-        "references": "参考链接",
+        "original": "原文链接",
         "tags": "标签",
         "selected_items": "从 {total} 条内容中筛选出 {selected} 条重要资讯。",
         "empty_analyzed": "已分析 {total} 条内容，但没有达到重要性阈值的条目。",
@@ -206,6 +206,7 @@ class DailySummarizer:
                 day = item.published_at.strftime("%d").lstrip("0")
                 source_parts.append(item.published_at.strftime(f"%b {day}, %H:%M"))
         source_line = " \u00b7 ".join(source_parts)  # ·
+        source_line += f' · [{labels["original"]}]({url})'
 
         discussion_url = meta.get("discussion_url")
         if discussion_url:
@@ -225,14 +226,6 @@ class DailySummarizer:
         if background:
             lines.append("")
             lines.append(f"**{labels['background']}**: {background}")
-
-        sources = meta.get("sources") or []
-        if sources:
-            items_html = "".join(f'<li><a href="{s["url"]}">{s["title"]}</a></li>\n' for s in sources)
-            lines += [
-                "",
-                f'<details><summary>{labels["references"]}</summary>\n<ul>\n{items_html}\n</ul>\n</details>',
-            ]
 
         if discussion:
             lines.append("")
