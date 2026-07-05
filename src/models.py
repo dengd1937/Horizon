@@ -347,6 +347,21 @@ class EmailConfig(BaseModel):
     enabled: bool = False
 
 
+class SiteConfig(BaseModel):
+    """Static reading-site configuration.
+
+    When enabled, each run downloads referenced media into output_dir and
+    (phase 5+) renders static HTML pages there. base_url and deploy_command
+    wire up hosted deployment in phase 2.
+    """
+
+    enabled: bool = False
+    output_dir: str = "data/site"
+    base_url: Optional[str] = None
+    deploy_command: Optional[str] = None
+    max_media_mb: int = 50
+
+
 class CategoryGroupConfig(BaseModel):
     """A quota group containing one or more source categories."""
 
@@ -375,3 +390,4 @@ class Config(BaseModel):
     filtering: FilteringConfig
     email: Optional[EmailConfig] = None
     webhook: Optional[WebhookConfig] = None
+    site: SiteConfig = Field(default_factory=SiteConfig)

@@ -18,6 +18,7 @@ from .scrapers.hackernews import HackerNewsScraper
 from .scrapers.rss import RSSScraper
 from .scrapers.reddit import RedditScraper
 from .scrapers.twitter import TwitterScraper
+from .scrapers.twitter_article import ArticleFetcher
 from .scrapers.twitter_playwright import TwitterPlaywrightScraper
 from .scrapers.openbb import OpenBBScraper
 from .scrapers.ossinsight import OSSInsightScraper
@@ -26,6 +27,8 @@ from .ai.analyzer import ContentAnalyzer
 from .ai.summarizer import DailySummarizer
 from .ai.enricher import ContentEnricher
 from .ai.tokens import get_usage_snapshot
+from .render.assets import MediaDownloader
+from .render.site import SiteRenderer
 
 
 @dataclass
@@ -139,11 +142,39 @@ class HorizonOrchestrator:
                 self.console.print(f"      • {source_key}: {count}")
             self.console.print("")
 
-            # 6. Search related stories + enrich with background knowledge (2nd AI pass)
+            # 6. Fetch full text for X Articles among selected items, then
+            #    enrich with background knowledge (2nd AI pass) based on it
+            await self._fetch_article_fulltext(important_items)
             await self._enrich_important_items(important_items)
 
-            # 7. Generate and save daily summaries for each configured language
+            # 7. Download referenced media locally for the reading site
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if self.config.site.enabled:
+                try:
+                    downloader = MediaDownloader(self.config.site)
+                    n_media = await downloader.download_for_items(important_items, today)
+                    if n_media:
+                        self.console.print(f"🖼️  Downloaded {n_media} media file(s) for the site\n")
+                except Exception as e:
+                    self.console.print(f"[yellow]⚠️  Media download failed: {e}[/yellow]\n")
+
+            # 8. Persist this run's items as structured JSON (site data source)
+            try:
+                run_path = self.storage.save_run_items(today, important_items, len(all_items))
+                self.console.print(f"💾 Saved run items to: {run_path}\n")
+            except Exception as e:
+                self.console.print(f"[yellow]⚠️  Failed to save run items: {e}[/yellow]\n")
+
+            # 9. Render the static reading site
+            if self.config.site.enabled:
+                try:
+                    renderer = SiteRenderer(self.config.site)
+                    pages = renderer.render(important_items, today, len(all_items))
+                    self.console.print(f"🌐 Site rendered: {pages[0]} (+{len(pages) - 1} pages)\n")
+                except Exception as e:
+                    self.console.print(f"[yellow]⚠️  Site render failed: {e}[/yellow]\n")
+
+            # 10. Generate and save daily summaries for each configured language
             for lang in self.config.ai.languages:
                 summarizer = DailySummarizer()
                 summary = await summarizer.generate_summary(important_items, today, len(all_items), language=lang)
@@ -643,6 +674,23 @@ class HorizonOrchestrator:
         ai_client = create_ai_client(self.config.ai)
         analyzer = ContentAnalyzer(ai_client)
         await analyzer.analyze_batch(expanded)
+
+    async def _fetch_article_fulltext(self, items: List[ContentItem]) -> None:
+        """Fetch full X Article text for selected items (before enrichment).
+
+        No-ops unless some selected item actually references an article, so
+        ordinary runs never launch a browser here.
+        """
+        twitter_cfg = self.config.sources.twitter
+        if not twitter_cfg or not twitter_cfg.enabled:
+            return
+        try:
+            fetcher = ArticleFetcher(twitter_cfg)
+            fetched = await fetcher.fetch_full_articles(items)
+            if fetched:
+                self.console.print(f"📖 Fetched full text for {fetched} X article(s)\n")
+        except Exception as e:
+            self.console.print(f"[yellow]⚠️  Article full-text fetch failed: {e}[/yellow]\n")
 
     async def _enrich_important_items(self, items: List[ContentItem]) -> None:
         """Enrich items with background knowledge (2nd AI pass).
