@@ -98,11 +98,10 @@ def test_extract_does_not_surface_quoted_original_as_standalone():
     qrt = _tweet_result("200", "dotey", "我的评论内容足够长了吧", quoted=quoted)
     raws = extract_timeline_tweets(_timeline(qrt), "dotey")
     assert [r["tweet_id"] for r in raws] == ["200"]
-    assert raws[0]["quoted"] == {
-        "tweet_id": "100",
-        "author": "AnthropicAI",
-        "text": "original announcement",
-    }
+    quoted_view = raws[0]["quoted"]
+    assert quoted_view["tweet_id"] == "100"
+    assert quoted_view["author"] == "AnthropicAI"
+    assert quoted_view["text"] == "original announcement"
 
 
 def test_extract_skips_foreign_author():
