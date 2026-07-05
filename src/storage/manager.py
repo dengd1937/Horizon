@@ -4,12 +4,13 @@ import json
 import os
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import ValidationError
 
-from ..models import Config
+from ..models import Config, ContentItem
 
 
 # Matches ${VAR_NAME} in string config values. Names follow env-var rules
@@ -57,9 +58,11 @@ class StorageManager:
         self.data_dir = Path(data_dir)
         self.config_path = self.data_dir / "config.json"
         self.summaries_dir = self.data_dir / "summaries"
+        self.runs_dir = self.data_dir / "runs"
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.summaries_dir.mkdir(parents=True, exist_ok=True)
+        self.runs_dir.mkdir(parents=True, exist_ok=True)
 
     def load_config(self) -> Config:
         if not self.config_path.exists():
@@ -116,6 +119,39 @@ class StorageManager:
             f.write(markdown)
 
         return filepath
+
+    def save_run_items(
+        self, date: str, items: list[ContentItem], total_fetched: int
+    ) -> Path:
+        """Persist one run's selected items (post analysis + enrichment).
+
+        Structured source for site rendering, historical re-rendering, and
+        any future consumer. Re-running the same date overwrites the file.
+        """
+        filepath = self.runs_dir / f"{date}.json"
+        payload = {
+            "date": date,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "total_fetched": total_fetched,
+            "items": [item.model_dump(mode="json") for item in items],
+        }
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=1)
+            f.write("\n")
+        return filepath
+
+    def load_run_items(
+        self, date: str
+    ) -> Optional[tuple[list[ContentItem], dict]]:
+        """Load a persisted run. Returns (items, meta) or None if absent."""
+        filepath = self.runs_dir / f"{date}.json"
+        if not filepath.exists():
+            return None
+        with open(filepath, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        items = [ContentItem.model_validate(raw) for raw in payload.get("items", [])]
+        meta = {k: v for k, v in payload.items() if k != "items"}
+        return items, meta
 
     def load_subscribers(self) -> list:
         """Loads the list of email subscribers."""

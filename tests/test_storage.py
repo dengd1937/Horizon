@@ -126,3 +126,95 @@ def test_load_config_expands_env_vars_in_ai_base_url(tmp_path, monkeypatch):
     storage = StorageManager(data_dir=str(tmp_path))
     config = storage.load_config()
     assert config.ai.base_url == "https://private-proxy.example/v1"
+
+
+# ---------- run items persistence ----------
+
+
+def _make_item(tweet_id: str = "100", **meta_overrides) -> "ContentItem":
+    from datetime import datetime, timezone
+
+    from src.models import ContentItem, SourceType
+
+    metadata = {
+        "tweet_id": tweet_id,
+        "is_retweet": False,
+        "is_quote": True,
+        "conversation_id": tweet_id,
+        "media": [
+            {
+                "type": "video",
+                "thumbnail_url": "https://pbs.twimg.com/t.jpg",
+                "mp4_url": "https://video.twimg.com/v.mp4",
+                "duration_ms": 15402,
+                "width": 1280,
+                "height": 720,
+            }
+        ],
+        "links": [
+            {
+                "short_url": "https://t.co/x",
+                "expanded_url": "https://example.com/post",
+                "display_url": "example.com/post",
+            }
+        ],
+        "thread_parts": [
+            {"tweet_id": tweet_id, "text": "第一段", "media": [], "links": []},
+            {"tweet_id": "101", "text": "第二段", "media": [], "links": []},
+        ],
+        "category": "ai-news",
+    }
+    metadata.update(meta_overrides)
+    return ContentItem(
+        id=f"twitter:tweet:{tweet_id}",
+        source_type=SourceType.TWITTER,
+        title="@dotey: 测试推文",
+        url=f"https://x.com/dotey/status/{tweet_id}",
+        content="第一段\n\n第二段",
+        author="dotey",
+        published_at=datetime(2026, 7, 5, 8, 30, tzinfo=timezone.utc),
+        metadata=metadata,
+        ai_score=8.5,
+        ai_summary="一条测试摘要",
+        ai_tags=["AI", "测试"],
+    )
+
+
+def test_save_and_load_run_items_round_trip(tmp_path):
+    storage = StorageManager(data_dir=str(tmp_path))
+    items = [_make_item("100"), _make_item("200", media=[], thread_parts=[])]
+
+    path = storage.save_run_items("2026-07-05", items, total_fetched=18)
+    assert path == tmp_path / "runs" / "2026-07-05.json"
+    assert path.exists()
+
+    loaded, meta = storage.load_run_items("2026-07-05")
+    assert meta["date"] == "2026-07-05"
+    assert meta["total_fetched"] == 18
+    assert meta["generated_at"]
+    assert len(loaded) == 2
+
+    original, restored = items[0], loaded[0]
+    assert restored.id == original.id
+    assert str(restored.url) == str(original.url)
+    assert restored.published_at == original.published_at
+    assert restored.ai_score == original.ai_score
+    assert restored.metadata["media"] == original.metadata["media"]
+    assert restored.metadata["thread_parts"] == original.metadata["thread_parts"]
+    assert restored.metadata["links"][0]["expanded_url"] == "https://example.com/post"
+
+
+def test_load_run_items_missing_returns_none(tmp_path):
+    storage = StorageManager(data_dir=str(tmp_path))
+    assert storage.load_run_items("1999-01-01") is None
+
+
+def test_save_run_items_same_date_overwrites(tmp_path):
+    storage = StorageManager(data_dir=str(tmp_path))
+    storage.save_run_items("2026-07-05", [_make_item("100")], total_fetched=10)
+    storage.save_run_items("2026-07-05", [_make_item("300")], total_fetched=5)
+
+    loaded, meta = storage.load_run_items("2026-07-05")
+    assert len(loaded) == 1
+    assert loaded[0].metadata["tweet_id"] == "300"
+    assert meta["total_fetched"] == 5
