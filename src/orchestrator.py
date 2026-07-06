@@ -28,6 +28,7 @@ from .ai.summarizer import DailySummarizer
 from .ai.enricher import ContentEnricher
 from .ai.tokens import get_usage_snapshot
 from .render.assets import MediaDownloader
+from .render.deploy import deploy_site
 from .render.site import SiteRenderer
 
 
@@ -165,7 +166,7 @@ class HorizonOrchestrator:
             except Exception as e:
                 self.console.print(f"[yellow]⚠️  Failed to save run items: {e}[/yellow]\n")
 
-            # 9. Render the static reading site
+            # 9. Render the static reading site, then deploy if configured
             if self.config.site.enabled:
                 try:
                     renderer = SiteRenderer(self.config.site)
@@ -173,6 +174,14 @@ class HorizonOrchestrator:
                     self.console.print(f"🌐 Site rendered: {pages[0]} (+{len(pages) - 1} pages)\n")
                 except Exception as e:
                     self.console.print(f"[yellow]⚠️  Site render failed: {e}[/yellow]\n")
+                else:
+                    deployed = await deploy_site(self.config.site)
+                    if deployed is True:
+                        self.console.print("🚀 Site deployed\n")
+                    elif deployed is False:
+                        self.console.print(
+                            "[yellow]⚠️  Site deploy failed (see logs); pages remain local[/yellow]\n"
+                        )
 
             # 10. Generate and save daily summaries for each configured language
             for lang in self.config.ai.languages:

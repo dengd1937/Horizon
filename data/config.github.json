@@ -10,7 +10,9 @@
     "throttle_sec": 0,
     "analysis_concurrency": 4,
     "enrichment_concurrency": 2,
-    "languages": ["zh"]
+    "languages": [
+      "zh"
+    ]
   },
   "sources": {
     "hackernews": {
@@ -77,7 +79,12 @@
       "ai": {
         "name": "AI / LLM / Agent",
         "limit": 12,
-        "categories": ["ai-news", "ai-tools", "machine-learning", "llm"]
+        "categories": [
+          "ai-news",
+          "ai-tools",
+          "machine-learning",
+          "llm"
+        ]
       }
     },
     "default_group": "other",
@@ -96,5 +103,12 @@
   },
   "webhook": {
     "enabled": false
+  },
+  "site": {
+    "enabled": true,
+    "output_dir": "data/site",
+    "base_url": "https://daily.signalfeed.site/d/${COS_SITE_PREFIX}",
+    "deploy_command": "coscli sync data/site/ cos://signalfeed-1257788828/d/${COS_SITE_PREFIX}/ -r -i \"$COS_SECRET_ID\" -k \"$COS_SECRET_KEY\" -e cos.ap-hongkong.myqcloud.com",
+    "max_media_mb": 50
   }
 }

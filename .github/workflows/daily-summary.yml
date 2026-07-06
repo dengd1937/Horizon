@@ -35,10 +35,35 @@ jobs:
           echo '${{ secrets.SUBSCRIBERS_JSON }}' > data/subscribers.json
           echo '${{ secrets.X_COOKIES }}' > data/x_cookies_1.json
 
+      - name: Install coscli
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sL -o "$HOME/.local/bin/coscli" \
+            https://github.com/tencentyun/coscli/releases/download/v1.0.8/coscli-v1.0.8-linux-amd64
+          chmod +x "$HOME/.local/bin/coscli"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Runners are stateless: pull the archive manifest back so the
+      # index page keeps accumulating across days. Missing file = first run.
+      - name: Pull site archive state
+        env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          COS_SITE_PREFIX: ${{ secrets.COS_SITE_PREFIX }}
+        run: |
+          mkdir -p data/site
+          coscli cp "cos://signalfeed-1257788828/d/${COS_SITE_PREFIX}/site_manifest.json" \
+            data/site/site_manifest.json \
+            -i "$COS_SECRET_ID" -k "$COS_SECRET_KEY" -e cos.ap-hongkong.myqcloud.com \
+            || echo "No manifest yet (first deploy)"
+
       - name: Run Horizon
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          COS_SITE_PREFIX: ${{ secrets.COS_SITE_PREFIX }}
         run: uv run horizon --hours 48
 
       - name: Set current date as environment variable
