@@ -227,12 +227,27 @@ class HorizonOrchestrator:
                 except Exception as e:
                     self.console.print(f"[yellow]⚠️  Failed to copy {lang.upper()} summary to docs/: {e}[/yellow]\n")
 
-                # Send email if configured
+                # Send email if configured. When the reading site has a
+                # base_url, render an email-only variant whose "original"
+                # links point at the deployed site; other channels keep the
+                # source-URL summary untouched.
                 if self.email_manager and self.config.email and self.config.email.enabled:
                     self.console.print(f"📧 Sending {lang.upper()} email summary...")
                     subscribers = self.storage.load_subscribers()
                     subject = f"Horizon Summary ({lang.upper()}) - {today}"
-                    self.email_manager.send_daily_summary(summary, subject, subscribers)
+                    email_base_url = (
+                        self.config.site.base_url if self.config.site.enabled else None
+                    )
+                    email_summary = summary
+                    if email_base_url:
+                        email_summary = await summarizer.generate_summary(
+                            important_items,
+                            today,
+                            len(all_items),
+                            language=lang,
+                            site_base_url=email_base_url,
+                        )
+                    self.email_manager.send_daily_summary(email_summary, subject, subscribers)
 
                 # Send webhook notification if configured
                 if self.webhook_notifier:

@@ -63,7 +63,9 @@ def _summary_text(item: ContentItem) -> str:
     )
 
 
-def _anchor(item: ContentItem, index: int) -> str:
+def item_anchor(item: ContentItem, index: int) -> str:
+    """Stable in-page anchor for an item; shared with the email summary so
+    email 'original' links jump to the right card on the reading site."""
     return f"t-{item.metadata.get('tweet_id') or index}"
 
 
@@ -151,14 +153,14 @@ class SiteRenderer:
             height = int(20 + (max(min(score, 10), 0) / 10) * 28)
             opacity = round(0.45 + (max(min(score, 10), 0) / 10) * 0.5, 2)
             bars.append(
-                f'<a href="#{_anchor(item, index)}" style="height:{height}px;opacity:{opacity}" '
+                f'<a href="#{item_anchor(item, index)}" style="height:{height}px;opacity:{opacity}" '
                 f'title="{_e(_fmt_score(item))} · {_e(_zh_title(item))}"></a>'
             )
 
         toc = []
         for index, item in enumerate(items, start=1):
             toc.append(
-                f'<li><a href="#{_anchor(item, index)}">{_e(_zh_title(item))}</a>'
+                f'<li><a href="#{item_anchor(item, index)}">{_e(_zh_title(item))}</a>'
                 f'<span class="s">{_e(_fmt_score(item))}</span></li>'
             )
 
@@ -209,7 +211,7 @@ class SiteRenderer:
             meta_parts.append(f"<span>{_e(tags)}</span>")
 
         return (
-            f'<article class="item" id="{_e(_anchor(item, index))}">\n'
+            f'<article class="item" id="{_e(item_anchor(item, index))}">\n'
             f'<div class="item-head"><span class="no">{index:02d}</span>'
             f'<span class="score">{_e(_fmt_score(item))}</span></div>\n'
             f"<h2>{_e(_zh_title(item))}</h2>\n"
@@ -428,7 +430,7 @@ class SiteRenderer:
             if cover_url
             else ""
         )
-        back = f"../{date}.html#{_anchor(item, index)}"
+        back = f"../{date}.html#{item_anchor(item, index)}"
         body = (
             '<div class="art-top"><span class="brand">HORIZON</span>'
             f'<a href="{_e(back)}">← 返回 {date}</a></div>\n'

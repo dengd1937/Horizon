@@ -141,3 +141,62 @@ def test_generate_empty_summary_zh_uses_localized_analyzed_line():
 
     assert "> 已分析 10 条内容，但没有达到重要性阈值的条目。" in result
     assert "Analyzed 10 items" not in result
+
+
+# ---------- site base_url: email links to reading site ----------
+
+
+def test_summary_with_base_url_links_original_to_site_anchor():
+    from src.render.site import item_anchor
+
+    summarizer = DailySummarizer()
+    item = _make_item(1)
+    item.metadata["tweet_id"] = "12345"
+    md = _run_async(
+        summarizer.generate_summary(
+            [item], "2026-07-05", 10, language="zh",
+            site_base_url="http://localhost:8933",
+        )
+    )
+    anchor = item_anchor(item, 1)
+    assert anchor == "t-12345"
+    # header web-version entry
+    assert "在网页版阅读本期" in md
+    assert "(http://localhost:8933/2026-07-05.html)" in md
+    # original link points at the site anchor, not the source url
+    assert f"[原文链接](http://localhost:8933/2026-07-05.html#{anchor})" in md
+
+
+def test_summary_without_base_url_keeps_source_url():
+    summarizer = DailySummarizer()
+    item = _make_item(1)
+    md = _run_async(
+        summarizer.generate_summary([item], "2026-07-05", 10, language="zh")
+    )
+    assert "[原文链接](https://example.com/items/1)" in md
+    assert "在网页版阅读本期" not in md
+
+
+def test_summary_base_url_trailing_slash_normalized():
+    summarizer = DailySummarizer()
+    item = _make_item(1)
+    md = _run_async(
+        summarizer.generate_summary(
+            [item], "2026-07-05", 10, language="zh",
+            site_base_url="http://localhost:8933/",
+        )
+    )
+    assert "http://localhost:8933/2026-07-05.html" in md
+    assert "8933//2026" not in md
+
+
+def test_summary_anchor_falls_back_to_index_without_tweet_id():
+    summarizer = DailySummarizer()
+    item = _make_item(1)  # RSS item, no tweet_id
+    md = _run_async(
+        summarizer.generate_summary(
+            [item], "2026-07-05", 10, language="zh",
+            site_base_url="http://localhost:8933",
+        )
+    )
+    assert "[原文链接](http://localhost:8933/2026-07-05.html#t-1)" in md

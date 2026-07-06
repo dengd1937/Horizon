@@ -1,9 +1,10 @@
 """Daily summary generation — pure programmatic rendering."""
 
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from ..models import ContentItem
+from ..render.site import item_anchor
 
 
 _CJK = r"[\u4e00-\u9fff\u3400-\u4dbf]"
@@ -25,6 +26,7 @@ LABELS = {
         "discussion": "Discussion",
         "original": "Original",
         "tags": "Tags",
+        "web_version": "Read this issue on the web",
         "selected_items": "From {total} items, {selected} important content pieces were selected",
         "empty_analyzed": "Analyzed {total} items, but none met the importance threshold.",
         "empty_body": (
@@ -45,6 +47,7 @@ LABELS = {
         "discussion": "社区讨论",
         "original": "原文链接",
         "tags": "标签",
+        "web_version": "在网页版阅读本期",
         "selected_items": "从 {total} 条内容中筛选出 {selected} 条重要资讯。",
         "empty_analyzed": "已分析 {total} 条内容，但没有达到重要性阈值的条目。",
         "empty_body": (
@@ -73,6 +76,7 @@ class DailySummarizer:
         date: str,
         total_fetched: int,
         language: str = "en",
+        site_base_url: Optional[str] = None,
     ) -> str:
         """Generate daily summary in Markdown format.
 
@@ -83,6 +87,9 @@ class DailySummarizer:
             date: Date string (YYYY-MM-DD)
             total_fetched: Total number of items fetched before filtering
             language: Output language, either "en" or "zh"
+            site_base_url: When set, each item's "original" link points at the
+                reading site (``{base}/{date}.html#anchor``) instead of the
+                source URL, and a web-version entry is added to the header.
 
         Returns:
             str: Markdown formatted summary
@@ -95,8 +102,11 @@ class DailySummarizer:
         header = (
             f"# {labels['header']} - {date}\n\n"
             f"> {labels['selected_items'].format(total=total_fetched, selected=len(items))}\n\n"
-            "---\n\n"
         )
+        if site_base_url:
+            page_url = f"{site_base_url.rstrip('/')}/{date}.html"
+            header += f"\U0001f4c4 [{labels['web_version']}]({page_url})\n\n"
+        header += "---\n\n"
 
         # TOC
         toc_entries = []
@@ -109,7 +119,10 @@ class DailySummarizer:
             toc_entries.append(f"{i + 1}. [{t}](#item-{i + 1}) \u2b50\ufe0f {score}/10")
         toc = "\n".join(toc_entries) + "\n\n---\n\n"
 
-        parts = [self._format_item(item, labels, language, i + 1) for i, item in enumerate(items)]
+        parts = [
+            self._format_item(item, labels, language, i + 1, date, site_base_url)
+            for i, item in enumerate(items)
+        ]
 
         return header + toc + "".join(parts)
 
@@ -160,7 +173,15 @@ class DailySummarizer:
         prefix = f"第 {index}/{total} 条\n\n" if language == "zh" else f"Item {index}/{total}\n\n"
         return prefix + self._format_item(item, labels, language, index).rstrip("-\n ")
 
-    def _format_item(self, item: ContentItem, labels: dict, language: str, index: int) -> str:
+    def _format_item(
+        self,
+        item: ContentItem,
+        labels: dict,
+        language: str,
+        index: int,
+        date: Optional[str] = None,
+        site_base_url: Optional[str] = None,
+    ) -> str:
         """Format a single ContentItem into Markdown."""
         _title = item.metadata.get(f"title_{language}") or item.title
         title = str(_title).replace("[", "(").replace("]", ")")
@@ -206,7 +227,13 @@ class DailySummarizer:
                 day = item.published_at.strftime("%d").lstrip("0")
                 source_parts.append(item.published_at.strftime(f"%b {day}, %H:%M"))
         source_line = " \u00b7 ".join(source_parts)  # ·
-        source_line += f' · [{labels["original"]}]({url})'
+        if site_base_url and date:
+            original_url = (
+                f"{site_base_url.rstrip('/')}/{date}.html#{item_anchor(item, index)}"
+            )
+        else:
+            original_url = url
+        source_line += f' · [{labels["original"]}]({original_url})'
 
         discussion_url = meta.get("discussion_url")
         if discussion_url:
