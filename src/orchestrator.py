@@ -3,7 +3,8 @@
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Dict, Optional
 from urllib.parse import urlparse
 import httpx
@@ -28,6 +29,7 @@ from .ai.summarizer import DailySummarizer
 from .ai.enricher import ContentEnricher
 from .ai.tokens import get_usage_snapshot
 from .render.assets import MediaDownloader
+from .render.curated import load_articles, new_articles_section
 from .render.deploy import deploy_site
 from .render.site import SiteRenderer
 
@@ -247,7 +249,10 @@ class HorizonOrchestrator:
                             language=lang,
                             site_base_url=email_base_url,
                         )
-                    self.email_manager.send_daily_summary(email_summary, subject, subscribers)
+                        email_summary += self._new_articles_section(email_base_url, today)
+                    self.email_manager.send_daily_summary(
+                        email_summary, subject, subscribers, site_url=email_base_url
+                    )
 
                 # Send webhook notification if configured
                 if self.webhook_notifier:
@@ -287,6 +292,14 @@ class HorizonOrchestrator:
                 )
 
             raise
+
+    def _new_articles_section(self, base_url: str, today: str) -> str:
+        """Markdown section listing curated articles added in the last day."""
+        articles = load_articles(Path(self.config.site.articles_source_dir))
+        since = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
+        return new_articles_section(
+            articles, base_url=base_url, since=since, today=today
+        )
 
     def _determine_time_window(self, force_hours: int = None) -> datetime:
         if force_hours:

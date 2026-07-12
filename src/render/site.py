@@ -16,6 +16,7 @@ from typing import Callable, List, Optional
 from ..models import ContentItem, SiteConfig
 from ..scrapers.twitter_article import ARTICLE_MARKER
 from .article_html import article_to_html, article_to_text
+from .curated import count_recent, load_articles, render_curated
 from .site_css import SITE_CSS
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,26 @@ _e = html.escape
 _URL_LINK_RE = re.compile(r"(https?://[^\s<]+)")
 _ARTICLE_URL_RE = re.compile(r"https?://\S*/i/article/\S+")
 _WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"]
+
+
+def daily_digest_path(date: str) -> Path:
+    """Daily Twitter digest page: daily/{date}.html."""
+    return Path("daily") / f"{date}.html"
+
+
+def daily_article_path(article_id: str) -> Path:
+    """X Article detail page (lives under the daily section): daily/article-{id}.html."""
+    return Path("daily") / f"article-{article_id}.html"
+
+
+def archive_index_path() -> Path:
+    """Daily archive index: daily/index.html (grouped by month)."""
+    return Path("daily") / "index.html"
+
+
+def root_index_path() -> Path:
+    """Root landing page: redirects to the latest daily digest."""
+    return Path("index.html")
 
 _RT_SVG = (
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
@@ -96,10 +117,18 @@ class SiteRenderer:
         self, items: List[ContentItem], date: str, total_fetched: int
     ) -> list[Path]:
         self.out.mkdir(parents=True, exist_ok=True)
+        (self.out / "daily").mkdir(parents=True, exist_ok=True)
         paths: list[Path] = []
 
-        digest = self.out / f"{date}.html"
-        digest.write_text(self._digest_page(items, date, total_fetched), encoding="utf-8")
+        articles = load_articles(Path(self.config.articles_source_dir))
+
+        digest = self.out / daily_digest_path(date)
+        digest.write_text(
+            self._digest_page(
+                items, date, total_fetched, count_recent(articles, today=date)
+            ),
+            encoding="utf-8",
+        )
         paths.append(digest)
 
         for index, item in enumerate(items, start=1):
@@ -108,9 +137,15 @@ class SiteRenderer:
                 paths.append(page)
 
         manifest = self._update_manifest(date, items)
-        index_page = self.out / "index.html"
-        index_page.write_text(self._index_page(manifest), encoding="utf-8")
-        paths.append(index_page)
+        archive = self.out / archive_index_path()
+        archive.write_text(self._index_page(manifest), encoding="utf-8")
+        paths.append(archive)
+
+        root_index = self.out / root_index_path()
+        root_index.write_text(self._root_index_page(manifest), encoding="utf-8")
+        paths.append(root_index)
+
+        paths.extend(render_curated(self.out, articles))
 
         logger.info("Site rendered: %d page(s) under %s", len(paths), self.out)
         return paths
@@ -139,13 +174,22 @@ class SiteRenderer:
     # ---------- digest page ----------
 
     def _digest_page(
-        self, items: List[ContentItem], date: str, total_fetched: int
+        self,
+        items: List[ContentItem],
+        date: str,
+        total_fetched: int,
+        recent_count: int,
     ) -> str:
         day = datetime.strptime(date, "%Y-%m-%d")
         weekday = _WEEKDAYS_ZH[day.weekday()]
         authors = {it.author for it in items if it.author}
         sources = " · ".join(sorted({it.source_type.value for it in items})) or "twitter"
         generated = datetime.now(timezone.utc).strftime("%H:%M")
+        recent_span = (
+            f'<span><a href="../articles/index.html">文章库本周 +{recent_count}</a></span>'
+            if recent_count > 0
+            else ""
+        )
 
         bars = []
         for index, item in enumerate(items, start=1):
@@ -171,7 +215,9 @@ class SiteRenderer:
         body = (
             '<header class="mast">\n'
             '<div class="mast-top"><span class="brand">HORIZON</span>'
-            '<a href="index.html">归档 ↗</a></div>\n'
+            '<span class="mast-links">'
+            '<a href="../articles/index.html">文章库 ↗</a>'
+            '<a href="index.html">归档 ↗</a></span></div>\n'
             f"<h1>{day.month}月{day.day}日<small>{day.year} · 星期{weekday}</small></h1>\n"
             f'<p class="stats">从 {total_fetched} 条抓取中筛选 <b>{len(items)}</b> 条 · '
             f"{_e(sources)} × {len(authors)} 账号 · {generated} UTC 生成</p>\n"
@@ -181,13 +227,14 @@ class SiteRenderer:
             f'<ol class="toc">{"".join(toc)}</ol>\n'
             f"{rendered_items}\n"
             '<footer class="foot"><span>HORIZON · 内容与媒体已本地化</span>'
+            f"{recent_span}"
             '<span><a href="index.html">全部归档</a></span></footer>'
         )
         return self._page(f"Horizon 每日速递 · {date}", body)
 
     def _item_html(self, item: ContentItem, index: int) -> str:
         meta = item.metadata
-        resolver = self._resolver(item)
+        resolver = self._resolver(item, prefix="../")
 
         summary = _summary_text(item)
         summary_html = f'<p class="summary">{_e(summary)}</p>\n' if summary else ""
@@ -395,7 +442,7 @@ class SiteRenderer:
             else ""
         )
         if article.get("content_state"):
-            href = f"articles/{article.get('article_id')}.html"
+            href = f"article-{article.get('article_id')}.html"
             kicker = "X ARTICLE · 全文已本地化"
             chars = len(article_to_text(article))
             images = len(article.get("media_entities") or [])
@@ -430,7 +477,7 @@ class SiteRenderer:
             if cover_url
             else ""
         )
-        back = f"../{date}.html#{item_anchor(item, index)}"
+        back = f"{date}.html#{item_anchor(item, index)}"
         body = (
             '<div class="art-top"><span class="brand">HORIZON</span>'
             f'<a href="{_e(back)}">← 返回 {date}</a></div>\n'
@@ -443,9 +490,9 @@ class SiteRenderer:
             f'<div class="prose">{body_html}</div>\n'
             f'<p class="backline"><a href="{_e(back)}">← 返回当日速递 · 第 {index:02d} 条</a></p>'
         )
-        articles_dir = self.out / "articles"
-        articles_dir.mkdir(parents=True, exist_ok=True)
-        path = articles_dir / f"{article.get('article_id')}.html"
+        daily_dir = self.out / "daily"
+        daily_dir.mkdir(parents=True, exist_ok=True)
+        path = daily_dir / f"article-{article.get('article_id')}.html"
         path.write_text(self._page(f"{title} · Horizon", body), encoding="utf-8")
         return path
 
@@ -492,9 +539,27 @@ class SiteRenderer:
 
         body = (
             '<div class="art-top"><span class="brand">HORIZON</span>'
-            "<span>每日速递 · 归档</span></div>\n"
+            '<span class="mast-links"><a href="../articles/index.html">文章库 ↗</a>'
+            '<a href="../index.html">最新 ↗</a></span></div>\n'
             '<h1 class="idx-title">归档</h1>\n'
             '<p class="idx-sub">内容与媒体已本地化 · 无需代理</p>\n'
             + "\n".join(sections)
         )
         return self._page("Horizon · 归档", body)
+
+    # ---------- root landing ----------
+
+    def _root_index_page(self, manifest: dict) -> str:
+        """Root / redirects to the latest daily digest (or archive when empty)."""
+        dates = sorted(manifest, reverse=True)
+        target = f"daily/{dates[0]}.html" if dates else "daily/index.html"
+        return (
+            "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
+            '<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            f'<meta http-equiv="refresh" content="0; url={_e(target)}">\n'
+            "<title>Horizon</title>\n"
+            "</head>\n<body>\n"
+            f'<p>跳转中… <a href="{_e(target)}">进入 Horizon</a></p>\n'
+            "</body>\n</html>\n"
+        )

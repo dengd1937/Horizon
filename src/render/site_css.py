@@ -46,6 +46,7 @@ a:focus-visible, summary:focus-visible {
   font-family: var(--mono); font-size: 12px; letter-spacing: .14em; color: var(--sub);
 }
 .mast-top .brand { color: var(--ink); font-weight: 700; }
+.mast-links { display: flex; gap: 16px; }
 .mast h1 {
   font-family: var(--serif); font-weight: 700; font-size: 46px;
   margin: 18px 0 4px; letter-spacing: .01em;
@@ -233,6 +234,29 @@ details .fold-body { padding: 12px 16px 14px; font-size: 14.5px; color: var(--su
   flex: 1; color: var(--sub); font-size: 14px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+.art-source { font-size: 15.5px; margin: 0 0 6px; }
+.art-source a { font-weight: 600; }
+.art-license { font-family: var(--mono); font-size: 11.5px; color: var(--sub); margin: 0 0 30px; }
+.intro { border-left: 3px solid var(--accent); margin: 0 0 30px; padding: 4px 0 4px 16px; color: var(--sub); font-size: 15.5px; }
+.intro p { margin: 0; }
+.pagenav {
+  margin-top: 50px; padding-top: 22px; border-top: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 14px;
+}
+.pagenav .prev, .pagenav .next { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pagenav .next { text-align: right; align-items: flex-end; }
+.pagenav .up { font-family: var(--mono); font-size: 12px; color: var(--sub); flex-shrink: 0; }
+.pagenav .muted { flex: 1; }
+.pagenav .dir { font-family: var(--mono); font-size: 11px; color: var(--sub); letter-spacing: .1em; }
+.pagenav .ttl { font-family: var(--serif); font-size: 14.5px; color: var(--ink); }
+.art-entry { display: block; padding: 16px 2px; border-bottom: 1px dashed var(--line); color: inherit; }
+.art-entry:hover { border-bottom-color: var(--accent); text-decoration: none; }
+.art-entry .day-tag { font-family: var(--mono); font-size: 11.5px; color: var(--signal); letter-spacing: .1em; display: block; margin-bottom: 5px; }
+.art-entry .ttl { font-family: var(--serif); font-size: 18px; font-weight: 700; display: block; margin-bottom: 5px; }
+.art-entry .meta { font-family: var(--mono); font-size: 11.5px; color: var(--sub); display: block; margin-bottom: 5px; }
+.art-entry .sum { font-size: 13.5px; color: var(--sub); display: block; }
+.empty { color: var(--sub); font-family: var(--mono); font-size: 13px; padding: 40px 0; }
 
 @media (max-width: 560px) {
   body { font-size: 15.5px; }

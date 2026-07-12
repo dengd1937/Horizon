@@ -162,9 +162,9 @@ def test_summary_with_base_url_links_original_to_site_anchor():
     assert anchor == "t-12345"
     # header web-version entry
     assert "在网页版阅读本期" in md
-    assert "(http://localhost:8933/2026-07-05.html)" in md
+    assert "(http://localhost:8933/daily/2026-07-05.html)" in md
     # original link points at the site anchor, not the source url
-    assert f"[原文链接](http://localhost:8933/2026-07-05.html#{anchor})" in md
+    assert f"[原文链接](http://localhost:8933/daily/2026-07-05.html#{anchor})" in md
 
 
 def test_summary_without_base_url_keeps_source_url():
@@ -186,7 +186,7 @@ def test_summary_base_url_trailing_slash_normalized():
             site_base_url="http://localhost:8933/",
         )
     )
-    assert "http://localhost:8933/2026-07-05.html" in md
+    assert "http://localhost:8933/daily/2026-07-05.html" in md
     assert "8933//2026" not in md
 
 
@@ -199,4 +199,4 @@ def test_summary_anchor_falls_back_to_index_without_tweet_id():
             site_base_url="http://localhost:8933",
         )
     )
-    assert "[原文链接](http://localhost:8933/2026-07-05.html#t-1)" in md
+    assert "[原文链接](http://localhost:8933/daily/2026-07-05.html#t-1)" in md

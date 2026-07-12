@@ -112,14 +112,18 @@ def _six_shapes() -> list[ContentItem]:
 
 
 def _render(tmp_path, items=None):
-    cfg = SiteConfig(enabled=True, output_dir=str(tmp_path))
+    cfg = SiteConfig(
+        enabled=True,
+        output_dir=str(tmp_path),
+        articles_source_dir=str(tmp_path / "no-articles"),
+    )
     renderer = SiteRenderer(cfg)
     return renderer.render(items or _six_shapes(), "2026-07-05", 18)
 
 
 def test_digest_page_structure(tmp_path):
     paths = _render(tmp_path)
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
 
     assert paths[0].name == "2026-07-05.html"
     assert digest.count('class="item"') == 6
@@ -131,15 +135,15 @@ def test_digest_page_structure(tmp_path):
 
 def test_asset_map_hit_and_fallback(tmp_path):
     _render(tmp_path)
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
     # mapped photo uses local path; unmapped nested-quote photo falls back
-    assert 'src="assets/2026-07-05/aa.jpg"' in digest
+    assert 'src="../assets/2026-07-05/aa.jpg"' in digest
     assert 'src="https://p/q.jpg"' in digest
 
 
 def test_rt_and_qrt_cards(tmp_path):
     _render(tmp_path)
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
     assert "@dotey 转推了" in digest
     assert "<b>@sama</b>" in digest and "<b>@gdb</b>" in digest
     # bare URL in original text becomes a link
@@ -152,18 +156,18 @@ def test_rt_and_qrt_cards(tmp_path):
 
 def test_thread_and_gif_cards(tmp_path):
     _render(tmp_path)
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
     assert "串推 2 条" in digest
     assert digest.count('class="tick') == 2
     assert "第一段" in digest and "第二段" in digest
     # GIF: local mp4, autoplay loop, badge
-    assert '<video autoplay loop muted playsinline src="assets/2026-07-05/gg.mp4">' in digest
+    assert '<video autoplay loop muted playsinline src="../assets/2026-07-05/gg.mp4">' in digest
     assert '<span class="tag">GIF</span>' in digest
 
 
 def test_folds_and_meta(tmp_path):
     _render(tmp_path)
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
     assert "<details><summary>背景</summary>" in digest
     assert "在 X 打开" in digest
     assert "#AI" in digest
@@ -171,17 +175,17 @@ def test_folds_and_meta(tmp_path):
 
 def test_article_card_and_page(tmp_path):
     paths = _render(tmp_path)
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
-    assert '<a class="articlecard" href="articles/900.html">' in digest
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
+    assert '<a class="articlecard" href="article-900.html">' in digest
     assert "全文已本地化" in digest
 
-    article_page = tmp_path / "articles" / "900.html"
+    article_page = tmp_path / "daily" / "article-900.html"
     assert article_page in paths
     content = article_page.read_text(encoding="utf-8")
     assert "<p>正文第一段</p>" in content
     # cover resolved with ../ prefix from articles/ subdir
     assert 'src="../assets/2026-07-05/cv.jpg"' in content
-    assert 'href="../2026-07-05.html#t-7"' in content
+    assert 'href="2026-07-05.html#t-7"' in content
 
 
 def test_article_without_fulltext_links_to_x(tmp_path):
@@ -191,9 +195,9 @@ def test_article_without_fulltext_links_to_x(tmp_path):
         article={"article_id": "901", "title": "仅预览", "preview_text": "p"},
     )
     _render(tmp_path, [item])
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
     assert '<a class="articlecard" href="https://x.com/dotey/status/8">' in digest
-    assert not (tmp_path / "articles" / "901.html").exists()
+    assert not (tmp_path / "daily" / "article-901.html").exists()
 
 
 def test_index_manifest_accumulates(tmp_path):
@@ -204,10 +208,20 @@ def test_index_manifest_accumulates(tmp_path):
     manifest = json.loads((tmp_path / "site_manifest.json").read_text(encoding="utf-8"))
     assert set(manifest) == {"2026-07-05", "2026-07-06"}
 
-    index = (tmp_path / "index.html").read_text(encoding="utf-8")
+    index = (tmp_path / "daily" / "index.html").read_text(encoding="utf-8")
     assert index.index("2026-07-06.html") < index.index("2026-07-05.html")
     assert "2026 年 7 月" in index
     assert "次日条目" in index
+
+
+def test_root_index_redirects_to_latest(tmp_path):
+    _render(tmp_path)
+    cfg = SiteConfig(enabled=True, output_dir=str(tmp_path))
+    SiteRenderer(cfg).render([_item("9", title_zh="次日条目")], "2026-07-06", 5)
+
+    root = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "url=daily/2026-07-06.html" in root
+    assert 'http-equiv="refresh"' in root
 
 
 def test_dynamic_text_is_escaped(tmp_path):
@@ -218,7 +232,7 @@ def test_dynamic_text_is_escaped(tmp_path):
         _content="body <script>bad</script>",
     )
     _render(tmp_path, [evil])
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
     assert "<script>alert(1)</script>" not in digest
     assert "&lt;script&gt;" in digest
     assert "<img onerror" not in digest
@@ -232,6 +246,25 @@ def test_bare_article_link_stripped_when_card_present(tmp_path):
         article={"article_id": "900", "title": "文章", "preview_text": "p"},
     )
     _render(tmp_path, [item])
-    digest = (tmp_path / "2026-07-05.html").read_text(encoding="utf-8")
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
     assert "/i/article/900" not in digest.split('class="articlecard"')[0].split('t-text')[-1]
     assert "推荐这篇" in digest and "值得一读" in digest
+
+
+def test_digest_links_to_articles_library(tmp_path):
+    _render(tmp_path)  # empty articles source → recent count 0
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
+    assert 'href="../articles/index.html"' in digest
+    assert "文章库 ↗" in digest
+    assert "文章库本周" not in digest  # hidden when recent count is 0
+
+
+def test_digest_shows_articles_weekly_count(tmp_path):
+    cfg = SiteConfig(
+        enabled=True,
+        output_dir=str(tmp_path),
+        articles_source_dir="tests/fixtures/articles",
+    )
+    SiteRenderer(cfg).render(_six_shapes(), "2026-07-09", 18)
+    digest = (tmp_path / "daily" / "2026-07-09.html").read_text(encoding="utf-8")
+    assert "文章库本周 +1" in digest  # fixture added 2026-07-08 within 7 days

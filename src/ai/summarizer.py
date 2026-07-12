@@ -104,7 +104,7 @@ class DailySummarizer:
             f"> {labels['selected_items'].format(total=total_fetched, selected=len(items))}\n\n"
         )
         if site_base_url:
-            page_url = f"{site_base_url.rstrip('/')}/{date}.html"
+            page_url = f"{site_base_url.rstrip('/')}/daily/{date}.html"
             header += f"\U0001f4c4 [{labels['web_version']}]({page_url})\n\n"
         header += "---\n\n"
 
@@ -229,7 +229,7 @@ class DailySummarizer:
         source_line = " \u00b7 ".join(source_parts)  # ·
         if site_base_url and date:
             original_url = (
-                f"{site_base_url.rstrip('/')}/{date}.html#{item_anchor(item, index)}"
+                f"{site_base_url.rstrip('/')}/daily/{date}.html#{item_anchor(item, index)}"
             )
         else:
             original_url = url

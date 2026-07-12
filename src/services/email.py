@@ -151,7 +151,13 @@ class EmailManager:
         except Exception as e:
             logger.error(f"Error checking subscriptions: {e}")
 
-    def send_daily_summary(self, summary_md: str, subject: str, subscribers: List[str]):
+    def send_daily_summary(
+        self,
+        summary_md: str,
+        subject: str,
+        subscribers: List[str],
+        site_url: str = None,
+    ):
         """Sends the daily summary to all subscribers."""
         if not self.config.enabled or not subscribers:
             return
@@ -163,6 +169,7 @@ class EmailManager:
             if markdown
             else f"<pre>{safe_summary}</pre>"
         )
+        footer_articles = f"<p>文章库：{site_url}/articles/</p>" if site_url else ""
 
         html_body = f"""
         <!DOCTYPE html>
@@ -182,6 +189,7 @@ class EmailManager:
             {html_content}
             <div class="footer">
                 <p>Sent by {self.config.sender_name}</p>
+                {footer_articles}
                 <p>To unsubscribe, please reply with "{self.config.unsubscribe_keyword}"</p>
             </div>
         </body>

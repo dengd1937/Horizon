@@ -174,3 +174,60 @@ def test_check_subscriptions_skips_imap_when_disabled(monkeypatch):
     manager.check_subscriptions(storage_manager=object())
 
     assert FakeIMAP.instances == []
+
+
+def test_send_daily_summary_footer_includes_articles_link(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    manager.send_daily_summary(
+        "# Hello", "Daily", ["user@example.com"], site_url="https://h.example"
+    )
+
+    html_body = (
+        FakeSMTP.instances[0].messages[0].get_payload()[1].get_payload(decode=True).decode()
+    )
+    assert "文章库：https://h.example/articles/" in html_body
+
+
+def test_send_daily_summary_footer_omits_articles_link_without_site_url(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    manager.send_daily_summary("# Hello", "Daily", ["user@example.com"])
+
+    html_body = (
+        FakeSMTP.instances[0].messages[0].get_payload()[1].get_payload(decode=True).decode()
+    )
+    assert "文章库：" not in html_body
+
+
+def test_send_daily_summary_renders_articles_section_in_both_parts(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    summary = (
+        "# Daily\n\nbody"
+        "\n\n## 本期新增精选文章\n"
+        "\n- **测试文章** · example.com\n"
+        "  摘要内容\n"
+        "  [阅读全文](https://h.example/articles/test.html)"
+    )
+    manager.send_daily_summary(
+        summary, "Daily", ["user@example.com"], site_url="https://h.example"
+    )
+
+    message = FakeSMTP.instances[0].messages[0]
+    text_body = message.get_payload()[0].get_payload(decode=True).decode()
+    html_body = message.get_payload()[1].get_payload(decode=True).decode()
+    assert "本期新增精选文章" in text_body
+    assert "测试文章" in text_body
+    assert "https://h.example/articles/test.html" in text_body
+    assert "<h2>本期新增精选文章</h2>" in html_body
+    assert "测试文章" in html_body

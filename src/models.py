@@ -357,6 +357,7 @@ class SiteConfig(BaseModel):
 
     enabled: bool = False
     output_dir: str = "data/site"
+    articles_source_dir: str = "articles"
     base_url: Optional[str] = None
     deploy_command: Optional[str] = None
     max_media_mb: int = 50
