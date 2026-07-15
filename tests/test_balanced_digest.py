@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from src.models import (
     Config,
     ContentItem,
     FilteringConfig,
+    SiteConfig,
     SourceType,
     SourcesConfig,
 )
@@ -188,3 +190,62 @@ def test_run_applies_balanced_digest_before_enrichment(tmp_path, monkeypatch) ->
     asyncio.run(orchestrator.run())
 
     assert enriched_ids == ["ai"]
+
+
+def test_daily_run_keeps_curated_media_localization(tmp_path, monkeypatch) -> None:
+    articles_dir = Path(__file__).parent / "fixtures" / "articles"
+    config = Config(
+        ai=AIConfig(
+            provider="openai",
+            model="test",
+            api_key_env="TEST_API_KEY",
+            languages=[],
+        ),
+        sources=SourcesConfig(),
+        filtering=FilteringConfig(ai_score_threshold=7.0),
+        site=SiteConfig(
+            enabled=True,
+            output_dir=str(tmp_path / "site"),
+            articles_source_dir=str(articles_dir),
+        ),
+    )
+    storage = SimpleNamespace()
+    orchestrator = HorizonOrchestrator(config, storage)
+    item = make_item("daily", 9.0, "ai")
+
+    async def fetch_all_sources(since):  # type: ignore[no-untyped-def]
+        return [item]
+
+    async def identity(items):  # type: ignore[no-untyped-def]
+        return items
+
+    async def no_op(items):  # type: ignore[no-untyped-def]
+        return None
+
+    async def localize(articles, downloader):  # type: ignore[no-untyped-def]
+        article = articles[0]
+        article.asset_map[article.cover] = (
+            f"assets/articles/{article.slug}/cover.jpg"
+        )
+        return 0
+
+    monkeypatch.setattr(orchestrator, "fetch_all_sources", fetch_all_sources)
+    monkeypatch.setattr(orchestrator, "_analyze_content", identity)
+    monkeypatch.setattr(orchestrator, "merge_topic_duplicates", identity)
+    monkeypatch.setattr(orchestrator, "_expand_twitter_discussion", no_op)
+    monkeypatch.setattr(orchestrator, "_enrich_important_items", no_op)
+    monkeypatch.setattr("src.orchestrator.localize_article_media", localize)
+
+    asyncio.run(orchestrator.run())
+
+    detail = (
+        tmp_path
+        / "site"
+        / "articles"
+        / "overreacted-io-20260708-the-tides-of-tech.html"
+    ).read_text(encoding="utf-8")
+    assert (
+        '../assets/articles/overreacted-io-20260708-the-tides-of-tech/cover.jpg'
+        in detail
+    )
+    assert "https://media.example/overreacted-cover.jpg" not in detail
