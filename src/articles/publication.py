@@ -1,0 +1,425 @@
+"""Safe Git publication primitives for curated articles."""
+
+import difflib
+import hashlib
+import json
+import subprocess
+import time
+import tomllib
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Collection, Optional, Sequence
+
+PUBLICATION_REMOTE = "origin"
+PUBLICATION_BRANCH = "main"
+PUBLICATION_WORKFLOW = "publish-articles.yml"
+
+
+class PublicationError(RuntimeError):
+    """Raised when publication safety preconditions are not met."""
+
+
+@dataclass(frozen=True)
+class PublicationSnapshot:
+    repo_root: str
+    head: str
+    remote_sha: str
+    remote: str = PUBLICATION_REMOTE
+    branch: str = PUBLICATION_BRANCH
+
+
+@dataclass(frozen=True)
+class ReviewState:
+    version: int
+    repo_root: str
+    article_path: str
+    article_sha256: str
+    diff_sha256: str
+    base_head: str
+    remote_sha: str
+    remote: str
+    branch: str
+    commit_message: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ReviewState":
+        try:
+            state = cls(**value)
+        except TypeError as exc:
+            raise PublicationError(f"invalid review state: {exc}") from exc
+        if state.version != 1:
+            raise PublicationError(f"unsupported review state version: {state.version}")
+        return state
+
+
+@dataclass(frozen=True)
+class CommitResult:
+    commit_sha: str
+    article_path: str
+    commit_message: str
+
+    def as_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+def _run(
+    repo: Path,
+    command: Sequence[str],
+    *,
+    allowed_returncodes: Collection[int] = (0,),
+) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            list(command),
+            cwd=repo,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise PublicationError(f"cannot run {command[0]}: {exc}") from exc
+    if result.returncode not in allowed_returncodes:
+        detail = (result.stderr or result.stdout).strip().replace("\x00", "")[:800]
+        raise PublicationError(
+            f"command failed ({result.returncode}): {' '.join(command)}"
+            + (f"\n{detail}" if detail else "")
+        )
+    return result
+
+
+def validate_horizon_workspace(repo: Path) -> Path:
+    """Resolve and verify the exact Horizon Git workspace root."""
+    repo = repo.expanduser().resolve()
+    root = Path(
+        _run(repo, ["git", "rev-parse", "--show-toplevel"]).stdout.strip()
+    ).resolve()
+    if root != repo:
+        raise PublicationError(f"workspace must be the Git root: {root}")
+
+    pyproject = root / "pyproject.toml"
+    contract = root / "docs" / "article-frontmatter-spec.md"
+    try:
+        project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
+        raise PublicationError("workspace has no readable Horizon pyproject.toml") from exc
+    if project.get("name") != "horizon" or not contract.is_file():
+        raise PublicationError("workspace is not a Horizon repository")
+    return root
+
+
+def _fetch_publication_ref(repo: Path) -> None:
+    _run(
+        repo,
+        [
+            "git",
+            "fetch",
+            "--quiet",
+            PUBLICATION_REMOTE,
+            f"+refs/heads/{PUBLICATION_BRANCH}:refs/remotes/{PUBLICATION_REMOTE}/{PUBLICATION_BRANCH}",
+        ],
+    )
+
+
+def _staged_paths(repo: Path) -> list[str]:
+    output = _run(
+        repo, ["git", "diff", "--cached", "--name-only", "-z"]
+    ).stdout
+    return [path for path in output.split("\x00") if path]
+
+
+def preflight(repo: Path, *, fetch: bool = True) -> PublicationSnapshot:
+    """Verify that publication can start without disturbing Git state."""
+    root = validate_horizon_workspace(repo)
+    branch = _run(root, ["git", "symbolic-ref", "--short", "HEAD"]).stdout.strip()
+    if branch != PUBLICATION_BRANCH:
+        raise PublicationError(
+            f"publication requires branch {PUBLICATION_BRANCH!r}, got {branch!r}"
+        )
+    staged = _staged_paths(root)
+    if staged:
+        raise PublicationError(
+            "index already contains staged changes: " + ", ".join(staged)
+        )
+    if fetch:
+        _fetch_publication_ref(root)
+    head = _run(root, ["git", "rev-parse", "HEAD"]).stdout.strip()
+    remote_ref = f"refs/remotes/{PUBLICATION_REMOTE}/{PUBLICATION_BRANCH}"
+    remote_sha = _run(root, ["git", "rev-parse", remote_ref]).stdout.strip()
+    if head != remote_sha:
+        raise PublicationError(
+            f"local HEAD {head} must equal {PUBLICATION_REMOTE}/{PUBLICATION_BRANCH} {remote_sha}"
+        )
+    return PublicationSnapshot(str(root), head, remote_sha)
+
+
+def _relative_article_path(repo: Path, article_path: Path) -> tuple[Path, str]:
+    root = validate_horizon_workspace(repo)
+    path = article_path.expanduser()
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise PublicationError("article path must be inside the Horizon workspace") from exc
+    if Path(relative).parent != Path("articles") or path.suffix != ".md":
+        raise PublicationError("article path must be articles/{slug}.md")
+    if not path.is_file():
+        raise PublicationError(f"article file does not exist: {relative}")
+    tracked = _run(
+        root,
+        ["git", "ls-files", "--error-unmatch", "--", relative],
+        allowed_returncodes={0, 1},
+    )
+    if tracked.returncode == 0:
+        raise PublicationError("publication only accepts a newly created article file")
+    return path, relative
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def canonical_new_file_diff(relative: str, content: str) -> str:
+    """Return the stable diff representation shown for a new article."""
+    lines = content.splitlines(keepends=True)
+    return "".join(
+        difflib.unified_diff(
+            [],
+            lines,
+            fromfile="/dev/null",
+            tofile=f"b/{relative}",
+            lineterm="\n",
+        )
+    )
+
+
+def build_review(repo: Path, article_path: Path) -> tuple[ReviewState, str]:
+    """Bind the exact article, diff, HEAD, and target that the user reviews."""
+    snapshot = preflight(repo)
+    root = Path(snapshot.repo_root)
+    path, relative = _relative_article_path(root, article_path)
+    content = path.read_text(encoding="utf-8")
+    diff = canonical_new_file_diff(relative, content)
+    state = ReviewState(
+        version=1,
+        repo_root=str(root),
+        article_path=relative,
+        article_sha256=_file_sha256(path),
+        diff_sha256=hashlib.sha256(diff.encode("utf-8")).hexdigest(),
+        base_head=snapshot.head,
+        remote_sha=snapshot.remote_sha,
+        remote=PUBLICATION_REMOTE,
+        branch=PUBLICATION_BRANCH,
+        commit_message=f"clip(article): {path.stem}",
+    )
+    return state, diff
+
+
+def save_review_state(state: ReviewState, output: Path) -> None:
+    """Persist review state outside the repository for the approval boundary."""
+    root = Path(state.repo_root)
+    output = output.expanduser().resolve()
+    try:
+        output.relative_to(root)
+    except ValueError:
+        pass
+    else:
+        raise PublicationError("review state must be stored outside the Horizon workspace")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(asdict(state), indent=2) + "\n", encoding="utf-8")
+
+
+def load_review_state(path: Path) -> ReviewState:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublicationError(f"cannot read review state {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise PublicationError("review state must contain a JSON object")
+    return ReviewState.from_dict(value)
+
+
+def _assert_review_unchanged(
+    state: ReviewState, *, fetch: bool = True
+) -> tuple[Path, Path, str]:
+    root = validate_horizon_workspace(Path(state.repo_root))
+    snapshot = preflight(root, fetch=fetch)
+    if snapshot.head != state.base_head or snapshot.remote_sha != state.remote_sha:
+        raise PublicationError("HEAD or remote changed after review; generate a new review")
+    if state.remote != PUBLICATION_REMOTE or state.branch != PUBLICATION_BRANCH:
+        raise PublicationError("review targets a non-publication remote or branch")
+    path, relative = _relative_article_path(root, root / state.article_path)
+    if relative != state.article_path or _file_sha256(path) != state.article_sha256:
+        raise PublicationError("article changed after review; generate a new review")
+    diff = canonical_new_file_diff(relative, path.read_text(encoding="utf-8"))
+    if hashlib.sha256(diff.encode("utf-8")).hexdigest() != state.diff_sha256:
+        raise PublicationError("article diff changed after review; generate a new review")
+    if state.commit_message != f"clip(article): {path.stem}":
+        raise PublicationError("review contains an invalid commit message")
+    return root, path, relative
+
+
+def discard_review(state: ReviewState) -> str:
+    """Delete an uncommitted reviewed file only when its approved hash is unchanged."""
+    root, path, relative = _assert_review_unchanged(state, fetch=False)
+    if relative in _staged_paths(root):
+        raise PublicationError("cannot discard a staged article")
+    path.unlink()
+    return relative
+
+
+def commit_review(state: ReviewState) -> CommitResult:
+    """Commit exactly the approved article while preserving unrelated worktree state."""
+    root, path, relative = _assert_review_unchanged(state)
+    try:
+        _run(root, ["git", "add", "--", relative])
+        staged = _staged_paths(root)
+        if staged != [relative]:
+            raise PublicationError(
+                "staged paths changed during publication: " + ", ".join(staged)
+            )
+        _run(root, ["git", "diff", "--cached", "--check"])
+        _run(root, ["git", "commit", "-m", state.commit_message])
+    except Exception:
+        if relative in _staged_paths(root):
+            _run(root, ["git", "restore", "--staged", "--", relative])
+        raise
+
+    commit_sha = _run(root, ["git", "rev-parse", "HEAD"]).stdout.strip()
+    parent = _run(root, ["git", "rev-parse", f"{commit_sha}^1"]).stdout.strip()
+    if parent != state.base_head:
+        raise PublicationError("created commit has an unexpected parent")
+    paths = [
+        line
+        for line in _run(
+            root,
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_sha],
+        ).stdout.splitlines()
+        if line
+    ]
+    if paths != [relative]:
+        raise PublicationError("created commit contains unexpected paths")
+    message = _run(root, ["git", "show", "-s", "--format=%s", commit_sha]).stdout.strip()
+    if message != state.commit_message:
+        raise PublicationError("created commit message differs from the review")
+    committed = _run(root, ["git", "show", f"{commit_sha}:{relative}"]).stdout
+    diff = canonical_new_file_diff(relative, committed)
+    if hashlib.sha256(diff.encode("utf-8")).hexdigest() != state.diff_sha256:
+        raise PublicationError("created commit differs from the reviewed diff")
+    return CommitResult(commit_sha, relative, message)
+
+
+def _assert_commit_matches_review(
+    root: Path, state: ReviewState, commit_sha: str
+) -> None:
+    parent = _run(root, ["git", "rev-parse", f"{commit_sha}^1"]).stdout.strip()
+    if parent != state.base_head or parent != state.remote_sha:
+        raise PublicationError("reviewed commit has an unexpected parent")
+    paths = [
+        line
+        for line in _run(
+            root,
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_sha],
+        ).stdout.splitlines()
+        if line
+    ]
+    if paths != [state.article_path]:
+        raise PublicationError("reviewed commit contains unexpected paths")
+    message = _run(root, ["git", "show", "-s", "--format=%s", commit_sha]).stdout.strip()
+    if message != state.commit_message:
+        raise PublicationError("reviewed commit message differs from approval")
+    committed = _run(root, ["git", "show", f"{commit_sha}:{state.article_path}"]).stdout
+    diff = canonical_new_file_diff(state.article_path, committed)
+    if hashlib.sha256(diff.encode("utf-8")).hexdigest() != state.diff_sha256:
+        raise PublicationError("reviewed commit content differs from approval")
+
+
+def push_review(state: ReviewState, commit_sha: str) -> dict[str, Any]:
+    """Push the reviewed commit to the one fixed publication ref, without force."""
+    root = validate_horizon_workspace(Path(state.repo_root))
+    head = _run(root, ["git", "rev-parse", "HEAD"]).stdout.strip()
+    if head != commit_sha:
+        raise PublicationError("current HEAD is not the reviewed commit")
+    _assert_commit_matches_review(root, state, commit_sha)
+    _fetch_publication_ref(root)
+    remote_ref = f"refs/remotes/{PUBLICATION_REMOTE}/{PUBLICATION_BRANCH}"
+    current_remote = _run(root, ["git", "rev-parse", remote_ref]).stdout.strip()
+    if current_remote == commit_sha:
+        return {"commit_sha": commit_sha, "already_pushed": True}
+    if current_remote != state.remote_sha:
+        raise PublicationError("publication branch moved after review; do not retry blindly")
+
+    _run(
+        root,
+        [
+            "git",
+            "push",
+            PUBLICATION_REMOTE,
+            f"{commit_sha}:refs/heads/{PUBLICATION_BRANCH}",
+        ],
+    )
+    remote_line = _run(
+        root,
+        ["git", "ls-remote", PUBLICATION_REMOTE, f"refs/heads/{PUBLICATION_BRANCH}"],
+    ).stdout.strip()
+    remote_sha = remote_line.split()[0] if remote_line else ""
+    if remote_sha != commit_sha:
+        raise PublicationError("remote publication ref does not match the pushed commit")
+    return {"commit_sha": commit_sha, "already_pushed": False}
+
+
+def query_workflow_run(
+    repo: Path,
+    commit_sha: str,
+    *,
+    wait_seconds: float = 0,
+    poll_seconds: float = 3,
+) -> dict[str, Any]:
+    """Find the publication workflow run tied to one exact commit SHA."""
+    root = validate_horizon_workspace(repo)
+    deadline = time.monotonic() + max(wait_seconds, 0)
+    last_match: Optional[dict[str, Any]] = None
+    while True:
+        result = _run(
+            root,
+            [
+                "gh",
+                "run",
+                "list",
+                "--workflow",
+                PUBLICATION_WORKFLOW,
+                "--commit",
+                commit_sha,
+                "--limit",
+                "20",
+                "--json",
+                "databaseId,url,status,conclusion,event,headBranch,headSha",
+            ],
+        )
+        try:
+            runs = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise PublicationError("gh returned invalid workflow JSON") from exc
+        if not isinstance(runs, list) or any(not isinstance(run, dict) for run in runs):
+            raise PublicationError("gh returned an unexpected workflow JSON shape")
+        for run in runs:
+            if (
+                run.get("headSha") == commit_sha
+                and run.get("event") == "push"
+                and run.get("headBranch") == PUBLICATION_BRANCH
+            ):
+                last_match = run
+                break
+        if last_match and (
+            last_match.get("status") == "completed" or time.monotonic() >= deadline
+        ):
+            return last_match
+        if time.monotonic() >= deadline:
+            if last_match:
+                return last_match
+            raise PublicationError(
+                f"no {PUBLICATION_WORKFLOW} run found for commit {commit_sha}"
+            )
+        time.sleep(min(poll_seconds, max(deadline - time.monotonic(), 0)))
