@@ -230,6 +230,21 @@ def test_root_index_redirects_to_latest(tmp_path):
     assert 'http-equiv="refresh"' in root
 
 
+def test_root_index_uses_canonical_base_url_when_configured(tmp_path):
+    renderer = SiteRenderer(
+        SiteConfig(
+            enabled=True,
+            output_dir=str(tmp_path),
+            base_url="https://www.signalfeed.site/",
+        )
+    )
+
+    root = renderer._root_index_page({"2026-07-06": {}})
+
+    assert "url=https://www.signalfeed.site/daily/2026-07-06.html" in root
+    assert 'href="https://www.signalfeed.site/daily/2026-07-06.html"' in root
+
+
 def test_path_helpers_return_sectioned_site_paths():
     assert daily_digest_path("2026-07-05").as_posix() == "daily/2026-07-05.html"
     assert daily_article_path("900").as_posix() == "daily/article-900.html"

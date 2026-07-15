@@ -607,7 +607,9 @@ class SiteRenderer:
     def _root_index_page(self, manifest: dict) -> str:
         """Root / redirects to the latest daily digest (or archive when empty)."""
         dates = sorted(manifest, reverse=True)
-        target = f"daily/{dates[0]}.html" if dates else "daily/index.html"
+        relative_target = f"daily/{dates[0]}.html" if dates else "daily/index.html"
+        base_url = (self.config.base_url or "").rstrip("/")
+        target = f"{base_url}/{relative_target}" if base_url else relative_target
         return (
             "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
             '<meta charset="utf-8">\n'

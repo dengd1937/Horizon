@@ -107,8 +107,8 @@
   "site": {
     "enabled": true,
     "output_dir": "data/site",
-    "base_url": "https://daily.signalfeed.site/d/${COS_SITE_PREFIX}",
-    "deploy_command": "coscli sync data/site/ cos://signalfeed-1257788828/d/${COS_SITE_PREFIX}/ -r --delete --force -i \"$COS_SECRET_ID\" -k \"$COS_SECRET_KEY\" -e cos.ap-hongkong.myqcloud.com",
+    "base_url": "https://www.signalfeed.site",
+    "deploy_command": "coscli sync data/site/ cos://signalfeed-1257788828/ -r --delete --force --exclude \"^d/.*$\" -i \"$COS_SECRET_ID\" -k \"$COS_SECRET_KEY\" -e cos.ap-hongkong.myqcloud.com",
     "max_media_mb": 50
   }
 }
