@@ -266,9 +266,15 @@ def test_workflow_query_filters_exact_sha_branch_and_event(git_workspace, monkey
     from src.articles import publication
 
     original_run = publication._run
+    gh_commands = []
 
     def fake_run(root, command, **kwargs):
+        if command == ["git", "remote", "get-url", "origin"]:
+            return subprocess.CompletedProcess(
+                command, 0, "https://github.com/acme/horizon.git\n", ""
+            )
         if command[0] == "gh":
+            gh_commands.append(command)
             payload = [
                 {
                     "databaseId": 7,
@@ -289,3 +295,10 @@ def test_workflow_query_filters_exact_sha_branch_and_event(git_workspace, monkey
     assert run["headBranch"] == "main"
     assert run["event"] == "push"
     assert run["conclusion"] == "success"
+    assert gh_commands[0][0:5] == [
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        "acme/horizon",
+    ]

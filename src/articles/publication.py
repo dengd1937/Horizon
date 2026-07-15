@@ -128,6 +128,34 @@ def _staged_paths(repo: Path) -> list[str]:
     return [path for path in output.split("\x00") if path]
 
 
+def _github_repo_for_publication(repo: Path) -> str:
+    """Return ``owner/name`` from the fixed origin GitHub remote."""
+    remote_url = _run(
+        repo, ["git", "remote", "get-url", PUBLICATION_REMOTE]
+    ).stdout.strip()
+    prefixes = (
+        "https://github.com/",
+        "http://github.com/",
+        "git@github.com:",
+        "ssh://git@github.com/",
+    )
+    relative = next(
+        (
+            remote_url.removeprefix(prefix)
+            for prefix in prefixes
+            if remote_url.startswith(prefix)
+        ),
+        "",
+    ).rstrip("/")
+    relative = relative.removesuffix(".git")
+    parts = relative.split("/")
+    if len(parts) != 2 or any(not part for part in parts):
+        raise PublicationError(
+            f"{PUBLICATION_REMOTE} must be a GitHub repository URL for workflow lookup"
+        )
+    return "/".join(parts)
+
+
 def preflight(repo: Path, *, fetch: bool = True) -> PublicationSnapshot:
     """Verify that publication can start without disturbing Git state."""
     root = validate_horizon_workspace(repo)
@@ -379,6 +407,7 @@ def query_workflow_run(
 ) -> dict[str, Any]:
     """Find the publication workflow run tied to one exact commit SHA."""
     root = validate_horizon_workspace(repo)
+    github_repo = _github_repo_for_publication(root)
     deadline = time.monotonic() + max(wait_seconds, 0)
     last_match: Optional[dict[str, Any]] = None
     while True:
@@ -388,6 +417,8 @@ def query_workflow_run(
                 "gh",
                 "run",
                 "list",
+                "--repo",
+                github_repo,
                 "--workflow",
                 PUBLICATION_WORKFLOW,
                 "--commit",
