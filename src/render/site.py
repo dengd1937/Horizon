@@ -16,7 +16,7 @@ from typing import Callable, List, Optional
 from ..models import ContentItem, SiteConfig
 from ..scrapers.twitter_article import ARTICLE_MARKER
 from .article_html import article_to_html, article_to_text
-from .curated import count_recent, load_articles, render_curated
+from .curated import CuratedArticle, count_recent, load_articles, render_curated
 from .site_css import SITE_CSS
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 _e = html.escape
 _URL_LINK_RE = re.compile(r"(https?://[^\s<]+)")
 _ARTICLE_URL_RE = re.compile(r"https?://\S*/i/article/\S+")
+_LEGACY_DAILY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.html$")
+_LEGACY_X_ARTICLE_RE = re.compile(r"^(\d+)\.html$")
+_LEGACY_X_ARTICLE_HREF_RE = re.compile(r'(href=["\'])articles/(\d+)\.html(["\'])')
+_LEGACY_DAILY_BACK_HREF_RE = re.compile(
+    r'(href=["\'])\.\./(\d{4}-\d{2}-\d{2}\.html(?:#[^"\']*)?)(["\'])'
+)
 _WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"]
 
 
@@ -114,13 +120,22 @@ class SiteRenderer:
     # ---------- public ----------
 
     def render(
-        self, items: List[ContentItem], date: str, total_fetched: int
+        self,
+        items: List[ContentItem],
+        date: str,
+        total_fetched: int,
+        curated_articles: Optional[list[CuratedArticle]] = None,
     ) -> list[Path]:
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "daily").mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_paths()
         paths: list[Path] = []
 
-        articles = load_articles(Path(self.config.articles_source_dir))
+        articles = (
+            curated_articles
+            if curated_articles is not None
+            else load_articles(Path(self.config.articles_source_dir))
+        )
 
         digest = self.out / daily_digest_path(date)
         digest.write_text(
@@ -150,6 +165,45 @@ class SiteRenderer:
         logger.info("Site rendered: %d page(s) under %s", len(paths), self.out)
         return paths
 
+    def _migrate_legacy_paths(self) -> None:
+        """Move pre-``/daily`` output into its new locations.
+
+        CI downloads the deployed site before rendering.  This makes the
+        migration safe for historical digest pages as well as today's output:
+        once moved locally, COS ``sync --delete`` removes only the old remote
+        objects after their replacements have been uploaded.
+        """
+        daily_dir = self.out / "daily"
+        daily_dir.mkdir(parents=True, exist_ok=True)
+
+        for legacy in self.out.iterdir():
+            if not legacy.is_file() or not _LEGACY_DAILY_RE.fullmatch(legacy.name):
+                continue
+            target = daily_dir / legacy.name
+            if not target.exists():
+                content = legacy.read_text(encoding="utf-8")
+                content = content.replace('src="assets/', 'src="../assets/')
+                content = content.replace('poster="assets/', 'poster="../assets/')
+                content = _LEGACY_X_ARTICLE_HREF_RE.sub(
+                    r"\1article-\2.html\3", content
+                )
+                target.write_text(content, encoding="utf-8")
+            legacy.unlink()
+
+        legacy_articles_dir = self.out / "articles"
+        if not legacy_articles_dir.is_dir():
+            return
+        for legacy in legacy_articles_dir.iterdir():
+            match = _LEGACY_X_ARTICLE_RE.fullmatch(legacy.name)
+            if not legacy.is_file() or not match:
+                continue
+            target = daily_dir / f"article-{match.group(1)}.html"
+            if not target.exists():
+                content = legacy.read_text(encoding="utf-8")
+                content = _LEGACY_DAILY_BACK_HREF_RE.sub(r"\1\2\3", content)
+                target.write_text(content, encoding="utf-8")
+            legacy.unlink()
+
     # ---------- shared bits ----------
 
     def _resolver(self, item: ContentItem, prefix: str = "") -> Callable[[str], str]:
@@ -167,6 +221,7 @@ class SiteRenderer:
             "<!DOCTYPE html>\n"
             '<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            '<link rel="icon" href="data:,">\n'
             f"<title>{_e(title)}</title>\n<style>{SITE_CSS}</style>\n</head>\n"
             f'<body>\n<div class="wrap">\n{body}\n</div>\n</body>\n</html>\n'
         )
@@ -557,6 +612,7 @@ class SiteRenderer:
             "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
             '<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            '<link rel="icon" href="data:,">\n'
             f'<meta http-equiv="refresh" content="0; url={_e(target)}">\n'
             "<title>Horizon</title>\n"
             "</head>\n<body>\n"

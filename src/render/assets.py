@@ -8,10 +8,12 @@ Successful downloads are recorded per item in metadata["asset_map"]
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import re
+import socket
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -24,10 +26,50 @@ logger = logging.getLogger(__name__)
 _EXT_RE = re.compile(r"\.(jpg|jpeg|png|gif|webp|mp4|m4v|webm)$", re.IGNORECASE)
 _IMAGE_FORMATS = {"jpg", "jpeg", "png", "gif", "webp"}
 _CHUNK_SIZE = 65536
+_ALLOWED_MEDIA_TYPES = ("image/", "video/")
 
 
 class _OversizeError(Exception):
     pass
+
+
+def _public_ip(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(value).is_global
+    except ValueError:
+        return False
+
+
+async def _validate_public_media_url(url: httpx.URL, *, resolve_dns: bool) -> None:
+    """Reject non-web and non-public destinations before every request hop."""
+    if url.scheme != "https" or not url.host:
+        raise ValueError(f"unsafe media URL scheme or host: {url}")
+    host = url.host.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        raise ValueError(f"unsafe media host: {host}")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        if not address.is_global:
+            raise ValueError(f"media URL resolves to a non-public address: {host}")
+        return
+    if not resolve_dns:
+        return
+
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(
+            host,
+            url.port or (443 if url.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as exc:
+        raise ValueError(f"cannot resolve media host {host}: {exc}") from exc
+    addresses = {info[4][0].split("%", 1)[0] for info in infos}
+    if not addresses or any(not _public_ip(value) for value in addresses):
+        raise ValueError(f"media host resolves to a non-public address: {host}")
 
 
 def collect_media_urls(item: ContentItem) -> list[str]:
@@ -101,13 +143,61 @@ class MediaDownloader:
         if not wanted:
             return 0
 
-        assets_dir = Path(self.config.output_dir) / "assets" / date
+        resolved, downloaded = await self.download_urls(
+            wanted, relative_dir=f"assets/{date}"
+        )
+
+        for item in items:
+            mapping = {
+                url: resolved[url]
+                for url in collect_media_urls(item)
+                if url in resolved
+            }
+            if mapping:
+                item.metadata["asset_map"] = mapping
+
+        logger.info(
+            "Media download: %d new, %d resolved, %d referenced",
+            downloaded,
+            len(resolved),
+            len(wanted),
+        )
+        return downloaded
+
+    async def download_urls(
+        self, urls: Iterable[str], *, relative_dir: str
+    ) -> tuple[dict[str, str], int]:
+        """Download URLs into a caller-selected directory below ``output_dir``.
+
+        The returned mapping retains the source URL as its key and stores a
+        site-relative asset path as its value.  It is shared by daily digest
+        media and curated-article media, whose assets live under
+        ``assets/articles/{slug}/``.
+        """
+        wanted = list(dict.fromkeys(url for url in urls if url.startswith("http")))
+        if not wanted:
+            return {}, 0
+
+        relative = Path(relative_dir)
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            raise ValueError(f"unsafe media relative directory: {relative_dir!r}")
+
+        assets_dir = Path(self.config.output_dir) / relative
         assets_dir.mkdir(parents=True, exist_ok=True)
         size_cap = self.config.max_media_mb * 1024 * 1024
         resolved: dict[str, str] = {}
         downloaded = 0
 
-        client_kwargs: dict = {"timeout": 60.0, "follow_redirects": True}
+        async def validate_request(request: httpx.Request) -> None:
+            await _validate_public_media_url(
+                request.url, resolve_dns=self._transport is None
+            )
+
+        client_kwargs: dict = {
+            "timeout": 60.0,
+            "follow_redirects": True,
+            "event_hooks": {"request": [validate_request]},
+        }
         if self._transport is not None:
             client_kwargs["transport"] = self._transport
         else:
@@ -123,7 +213,7 @@ class MediaDownloader:
                 nonlocal downloaded
                 filename = asset_filename(url)
                 dest = assets_dir / filename
-                rel_path = f"assets/{date}/{filename}"
+                rel_path = (relative / filename).as_posix()
                 if dest.exists():
                     resolved[url] = rel_path
                     return
@@ -133,6 +223,16 @@ class MediaDownloader:
                             if response.status_code != 200:
                                 logger.warning(
                                     "Media download HTTP %d: %s", response.status_code, url
+                                )
+                                return
+                            media_type = response.headers.get("content-type", "").split(
+                                ";", 1
+                            )[0].strip().lower()
+                            if not media_type.startswith(_ALLOWED_MEDIA_TYPES):
+                                logger.warning(
+                                    "Skipping non-media response (%s): %s",
+                                    media_type or "missing content-type",
+                                    url,
                                 )
                                 return
                             declared = int(response.headers.get("content-length") or 0)
@@ -166,19 +266,4 @@ class MediaDownloader:
 
             await asyncio.gather(*(fetch(url) for url in wanted))
 
-        for item in items:
-            mapping = {
-                url: resolved[url]
-                for url in collect_media_urls(item)
-                if url in resolved
-            }
-            if mapping:
-                item.metadata["asset_map"] = mapping
-
-        logger.info(
-            "Media download: %d new, %d resolved, %d referenced",
-            downloaded,
-            len(resolved),
-            len(wanted),
-        )
-        return downloaded
+        return resolved, downloaded

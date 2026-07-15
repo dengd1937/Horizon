@@ -203,15 +203,16 @@ details .fold-body { padding: 12px 16px 14px; font-size: 14.5px; color: var(--su
   margin: 0 0 30px; display: flex; flex-wrap: wrap; gap: 6px 14px;
 }
 .art-byline a { color: var(--sub); border-bottom: 1px dotted var(--sub); }
-.art-cover { width: 100%; border: 1px solid var(--card-line); border-radius: 12px; display: block; margin: 0 0 38px; height: auto; }
+.art-cover { width: 100%; max-width: 100%; border: 1px solid var(--card-line); border-radius: 12px; display: block; margin: 0 0 38px; height: auto; }
 .prose { font-size: 17px; line-height: 1.9; }
 .prose p { margin: 0 0 1.35em; }
 .prose h2, .prose h3, .prose h4 { font-family: var(--serif); line-height: 1.5; margin: 1.6em 0 .6em; }
 .prose figure { margin: 1.6em 0; }
-.prose figure img {
-  width: 100%; height: auto; display: block;
+.prose img, .prose video {
+  width: 100%; max-width: 100%; height: auto; display: block;
   border: 1px solid var(--card-line); border-radius: 10px;
 }
+.prose video { background: #000; }
 .prose blockquote {
   border-left: 3px solid var(--card-line); margin: 1.4em 0; padding: 2px 0 2px 16px;
   color: var(--sub);

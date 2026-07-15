@@ -29,7 +29,12 @@ from .ai.summarizer import DailySummarizer
 from .ai.enricher import ContentEnricher
 from .ai.tokens import get_usage_snapshot
 from .render.assets import MediaDownloader
-from .render.curated import load_articles, new_articles_section
+from .render.curated import (
+    format_new_articles_section,
+    load_articles,
+    localize_article_media,
+    select_new_articles,
+)
 from .render.deploy import deploy_site
 from .render.site import SiteRenderer
 
@@ -152,12 +157,23 @@ class HorizonOrchestrator:
 
             # 7. Download referenced media locally for the reading site
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            curated_articles = None
             if self.config.site.enabled:
                 try:
                     downloader = MediaDownloader(self.config.site)
                     n_media = await downloader.download_for_items(important_items, today)
                     if n_media:
                         self.console.print(f"🖼️  Downloaded {n_media} media file(s) for the site\n")
+                    curated_articles = load_articles(
+                        Path(self.config.site.articles_source_dir)
+                    )
+                    n_article_media = await localize_article_media(
+                        curated_articles, downloader
+                    )
+                    if n_article_media:
+                        self.console.print(
+                            f"🖼️  Downloaded {n_article_media} curated article media file(s) for the site\n"
+                        )
                 except Exception as e:
                     self.console.print(f"[yellow]⚠️  Media download failed: {e}[/yellow]\n")
 
@@ -172,7 +188,12 @@ class HorizonOrchestrator:
             if self.config.site.enabled:
                 try:
                     renderer = SiteRenderer(self.config.site)
-                    pages = renderer.render(important_items, today, len(all_items))
+                    pages = renderer.render(
+                        important_items,
+                        today,
+                        len(all_items),
+                        curated_articles=curated_articles,
+                    )
                     self.console.print(f"🌐 Site rendered: {pages[0]} (+{len(pages) - 1} pages)\n")
                 except Exception as e:
                     self.console.print(f"[yellow]⚠️  Site render failed: {e}[/yellow]\n")
@@ -241,6 +262,7 @@ class HorizonOrchestrator:
                         self.config.site.base_url if self.config.site.enabled else None
                     )
                     email_summary = summary
+                    email_article_slugs: list[str] = []
                     if email_base_url:
                         email_summary = await summarizer.generate_summary(
                             important_items,
@@ -249,9 +271,19 @@ class HorizonOrchestrator:
                             language=lang,
                             site_base_url=email_base_url,
                         )
-                        email_summary += self._new_articles_section(email_base_url, today)
-                    self.email_manager.send_daily_summary(
-                        email_summary, subject, subscribers, site_url=email_base_url
+                        email_articles = self._new_email_articles(lang, today)
+                        email_summary += format_new_articles_section(
+                            email_articles, base_url=email_base_url
+                        )
+                        email_article_slugs = [article.slug for article in email_articles]
+                    self._deliver_email_summary(
+                        email_summary,
+                        subject,
+                        subscribers,
+                        site_url=email_base_url,
+                        language=lang,
+                        report_date=today,
+                        article_slugs=email_article_slugs,
                     )
 
                 # Send webhook notification if configured
@@ -293,13 +325,42 @@ class HorizonOrchestrator:
 
             raise
 
-    def _new_articles_section(self, base_url: str, today: str) -> str:
-        """Markdown section listing curated articles added in the last day."""
+    def _email_articles_since(self, language: str, today: str) -> str:
+        """Use the last successful delivery, or the first-send one-day fallback."""
+        return self.storage.load_last_successful_email_date(language) or (
+            date.fromisoformat(today) - timedelta(days=1)
+        ).isoformat()
+
+    def _new_email_articles(self, language: str, today: str):
+        """Select unsent articles, retaining the inclusive same-day boundary."""
         articles = load_articles(Path(self.config.site.articles_source_dir))
-        since = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
-        return new_articles_section(
-            articles, base_url=base_url, since=since, today=today
+        return select_new_articles(
+            articles,
+            since=self._email_articles_since(language, today),
+            today=today,
+            delivered_slugs=self.storage.load_delivered_article_slugs(language),
         )
+
+    def _deliver_email_summary(
+        self,
+        summary: str,
+        subject: str,
+        subscribers: list[str],
+        *,
+        site_url: Optional[str],
+        language: str,
+        report_date: str,
+        article_slugs: list[str] | tuple[str, ...] = (),
+    ) -> bool:
+        """Send a summary and advance its watermark only after real delivery."""
+        delivered = self.email_manager.send_daily_summary(
+            summary, subject, subscribers, site_url=site_url
+        )
+        if delivered:
+            self.storage.save_last_successful_email_date(
+                report_date, language, article_slugs=article_slugs
+            )
+        return delivered
 
     def _determine_time_window(self, force_hours: int = None) -> datetime:
         if force_hours:

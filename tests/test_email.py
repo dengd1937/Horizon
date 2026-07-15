@@ -34,6 +34,18 @@ class FakeIMAP:
         FakeIMAP.instances.append((server, port))
 
 
+class FailingSMTP(FakeSMTP):
+    def send_message(self, message):
+        raise OSError("recipient rejected")
+
+
+class PartiallyFailingSMTP(FakeSMTP):
+    def send_message(self, message):
+        if message["To"] == "fail@example.com":
+            raise OSError("recipient rejected")
+        super().send_message(message)
+
+
 def _email_config(**overrides):
     data = {
         "enabled": True,
@@ -189,7 +201,11 @@ def test_send_daily_summary_footer_includes_articles_link(monkeypatch):
     html_body = (
         FakeSMTP.instances[0].messages[0].get_payload()[1].get_payload(decode=True).decode()
     )
-    assert "文章库：https://h.example/articles/" in html_body
+    text_body = FakeSMTP.instances[0].messages[0].get_payload()[0].get_payload(
+        decode=True
+    ).decode()
+    assert '文章库：<a href="https://h.example/articles/">https://h.example/articles/</a>' in html_body
+    assert "文章库：https://h.example/articles/" in text_body
 
 
 def test_send_daily_summary_footer_omits_articles_link_without_site_url(monkeypatch):
@@ -231,3 +247,77 @@ def test_send_daily_summary_renders_articles_section_in_both_parts(monkeypatch):
     assert "https://h.example/articles/test.html" in text_body
     assert "<h2>本期新增精选文章</h2>" in html_body
     assert "测试文章" in html_body
+    assert text_body.index("本期新增精选文章") < text_body.index("测试文章") < text_body.index(
+        "https://h.example/articles/test.html"
+    )
+    assert html_body.index("<h2>本期新增精选文章</h2>") < html_body.index(
+        "测试文章"
+    ) < html_body.index("https://h.example/articles/test.html")
+
+
+def test_send_daily_summary_without_new_articles_has_no_empty_section(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    assert manager.send_daily_summary("# Daily\n\nbody", "Daily", ["user@example.com"])
+
+    message = FakeSMTP.instances[0].messages[0]
+    text_body = message.get_payload()[0].get_payload(decode=True).decode()
+    html_body = message.get_payload()[1].get_payload(decode=True).decode()
+    assert "本期新增精选文章" not in text_body
+    assert "本期新增精选文章" not in html_body
+
+
+def test_send_daily_summary_normalizes_articles_footer_url(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    assert manager.send_daily_summary(
+        "# Hello", "Daily", ["user@example.com"], site_url="https://h.example/"
+    )
+    html_body = FakeSMTP.instances[0].messages[0].get_payload()[1].get_payload(
+        decode=True
+    ).decode()
+    assert "https://h.example/articles/" in html_body
+    assert "//articles/" not in html_body
+
+
+def test_send_daily_summary_returns_false_for_disabled_dry_run_and_failures(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    assert not manager.send_daily_summary("# Hello", "Daily", [], site_url="https://h.example")
+    assert not manager.send_daily_summary(
+        "# Hello", "Daily", ["user@example.com"], dry_run=True
+    )
+    assert FakeSMTP.instances == []
+
+    disabled = EmailManager(_email_config(enabled=False))
+    assert not disabled.send_daily_summary("# Hello", "Daily", ["user@example.com"])
+
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FailingSMTP)
+    assert not manager.send_daily_summary("# Hello", "Daily", ["user@example.com"])
+
+
+def test_send_daily_summary_requires_every_recipient_to_succeed(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr(
+        "src.services.email.smtplib.SMTP_SSL", PartiallyFailingSMTP
+    )
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    delivered = manager.send_daily_summary(
+        "# Hello", "Daily", ["ok@example.com", "fail@example.com"]
+    )
+
+    assert not delivered
+    assert [message["To"] for message in FakeSMTP.instances[0].messages] == [
+        "ok@example.com"
+    ]

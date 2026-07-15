@@ -157,10 +157,20 @@ class EmailManager:
         subject: str,
         subscribers: List[str],
         site_url: str = None,
-    ):
-        """Sends the daily summary to all subscribers."""
+        dry_run: bool = False,
+    ) -> bool:
+        """Send the summary and return whether every recipient received it.
+
+        A disabled, empty-recipient, dry-run, SMTP-failure, or all-recipient
+        failure returns ``False``.  Callers use this to avoid advancing their
+        article-email watermark when no reader actually received the summary.
+        """
         if not self.config.enabled or not subscribers:
-            return
+            return False
+
+        if dry_run:
+            self.console.print("[yellow]Dry run: email summary was not sent.[/yellow]")
+            return False
 
         cleaned_summary = clean_app_summary_markdown(summary_md)
         safe_summary = html.escape(cleaned_summary)
@@ -169,7 +179,15 @@ class EmailManager:
             if markdown
             else f"<pre>{safe_summary}</pre>"
         )
-        footer_articles = f"<p>文章库：{site_url}/articles/</p>" if site_url else ""
+        site_base_url = site_url.rstrip("/") if site_url else ""
+        articles_url = f"{site_base_url}/articles/" if site_base_url else ""
+        footer_articles = (
+            f'<p>文章库：<a href="{html.escape(articles_url, quote=True)}">'
+            f"{html.escape(articles_url)}</a></p>"
+            if articles_url
+            else ""
+        )
+        text_footer_articles = f"\n\n文章库：{articles_url}" if articles_url else ""
 
         html_body = f"""
         <!DOCTYPE html>
@@ -196,6 +214,7 @@ class EmailManager:
         </html>
         """
 
+        sent_count = 0
         try:
             with smtplib.SMTP_SSL(
                 self.config.smtp_server, self.config.smtp_port
@@ -212,7 +231,7 @@ class EmailManager:
                     )
                     msg["To"] = subscriber
 
-                    text_part = MIMEText(cleaned_summary, "plain")
+                    text_part = MIMEText(cleaned_summary + text_footer_articles, "plain")
                     html_part = MIMEText(html_body, "html")
 
                     msg.attach(text_part)
@@ -221,11 +240,13 @@ class EmailManager:
                     try:
                         server.send_message(msg)
                         logger.info(f"Sent summary to {subscriber}")
+                        sent_count += 1
                     except Exception as e:
                         logger.error(f"Failed to send to {subscriber}: {e}")
 
         except Exception as e:
             logger.error(f"SMTP Error: {e}")
+        return sent_count == len(subscribers)
 
     def _send_reply(self, to_email: str, subject: str, body: str):
         """Helper to send a simple reply."""

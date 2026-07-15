@@ -7,7 +7,7 @@ added_date: 2026-07-08
 slug: overreacted-io-20260708-the-tides-of-tech
 summary: 一篇关于技术周期性兴衰的随想。
 tags: [技术, 随想]
-cover: assets/articles/overreacted-io-20260708-the-tides-of-tech/cover.jpg
+cover: https://media.example/overreacted-cover.jpg
 intro: |
   作者从潮汐比喻出发，谈论框架与范式更迭的节奏。
 ---
@@ -23,4 +23,4 @@ intro: |
 
 > 引用块验证。
 
-![潮汐示意图](assets/articles/overreacted-io-20260708-the-tides-of-tech/tide.jpg)
+![潮汐示意图](https://media.example/overreacted-tide.jpg)

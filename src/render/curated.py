@@ -1,99 +1,115 @@
 """Curated article rendering: parse frontmatter sources, render detail + index.
 
-Consumes hand-curated ``articles/*.md`` files (produced by the standalone
-``web-article-clipper`` skill) and renders the ``/articles/`` library: a
+Consumes hand-curated ``articles/*.md`` files (produced by Horizon's project-level
+``horizon-add-article`` skill) and renders the ``/articles/`` library: a
 month-grouped index plus per-article detail pages with original-source link,
 reprint notice, optional intro, full body, and prev/next navigation.
 """
 
 import html
 import re
-from dataclasses import dataclass
 from datetime import date as date_cls, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Collection, Optional
 
-import frontmatter
 import markdown
 
+from ..articles.contract import (
+    MARKDOWN_IMAGE_RE,
+    ArticleValidationError,
+    CuratedArticle,
+    load_article,
+    load_articles,
+    markdown_image_url,
+    slugify,
+)
+from .assets import MediaDownloader
+from .html_sanitizer import sanitize_html_fragment
 from .site_css import SITE_CSS
 
 _e = html.escape
 
-REQUIRED_FIELDS = (
-    "title",
-    "source_url",
-    "source_domain",
-    "published_date",
-    "added_date",
-    "slug",
-    "summary",
-)
+
+def article_media_urls(article: CuratedArticle) -> list[str]:
+    """Return remote cover/body image URLs without collecting ordinary links."""
+    urls: list[str] = []
+    candidates = [
+        article.cover,
+        *(markdown_image_url(m) for m in MARKDOWN_IMAGE_RE.finditer(article.body_md)),
+    ]
+    for url in candidates:
+        if url and url.startswith("https://") and url not in urls:
+            urls.append(url)
+    return urls
 
 
-class ArticleValidationError(ValueError):
-    """Raised when an article source is missing required frontmatter."""
-
-
-@dataclass
-class CuratedArticle:
-    slug: str
-    title: str
-    source_url: str
-    source_domain: str
-    published_date: str
-    added_date: str
-    summary: str
-    tags: list[str]
-    cover: Optional[str]
-    intro: Optional[str]
-    body_md: str
-
-
-def load_article(path: Path) -> CuratedArticle:
-    """Parse one frontmatter source file into a validated CuratedArticle."""
-    post = frontmatter.loads(path.read_text(encoding="utf-8"))
-    meta = post.metadata or {}
-    missing = [f for f in REQUIRED_FIELDS if not meta.get(f)]
-    if missing:
-        raise ArticleValidationError(
-            f"{path.name}: missing required field(s): {', '.join(missing)}"
+async def localize_article_media(
+    articles: list[CuratedArticle], downloader: MediaDownloader
+) -> int:
+    """Download curated cover/body images and attach URL-to-local-path mappings."""
+    downloaded = 0
+    for article in articles:
+        mapping, new_files = await downloader.download_urls(
+            article_media_urls(article), relative_dir=f"assets/articles/{article.slug}"
         )
-    raw_intro = meta.get("intro")
-    intro = str(raw_intro).strip() or None if raw_intro else None
-    return CuratedArticle(
-        slug=str(meta["slug"]),
-        title=str(meta["title"]),
-        source_url=str(meta["source_url"]),
-        source_domain=str(meta["source_domain"]),
-        published_date=str(meta["published_date"]),
-        added_date=str(meta["added_date"]),
-        summary=str(meta["summary"]),
-        tags=[str(t) for t in (meta.get("tags") or [])],
-        cover=(str(meta["cover"]) if meta.get("cover") else None),
-        intro=intro,
-        body_md=(post.content or "").strip(),
-    )
-
-
-def load_articles(source_dir: Path) -> list[CuratedArticle]:
-    """Scan ``source_dir/*.md``; return articles sorted by added_date desc."""
-    if not source_dir.is_dir():
-        return []
-    articles = [load_article(p) for p in sorted(source_dir.glob("*.md"))]
-    articles.sort(key=lambda a: a.added_date, reverse=True)
-    return articles
+        article.asset_map.update(mapping)
+        downloaded += new_files
+    return downloaded
 
 
 def count_recent(articles: list[CuratedArticle], *, today: str, days: int = 7) -> int:
-    """Count articles added within the last ``days`` days (inclusive of today)."""
+    """Count additions in a UTC report-date rolling window, inclusive of today.
+
+    ``today`` is the static digest's UTC ``YYYY-MM-DD`` date, not the process
+    clock.  With the default ``days=7``, the fixed window is ``today - 6``
+    through ``today``: seven calendar dates in total.
+    """
+    if days < 1:
+        raise ValueError("days must be at least 1")
     today_d = date_cls.fromisoformat(today)
-    cutoff = today_d - timedelta(days=days)
+    cutoff = today_d - timedelta(days=days - 1)
     return sum(
         1
         for a in articles
         if cutoff <= date_cls.fromisoformat(a.added_date) <= today_d
     )
+
+
+def select_new_articles(
+    articles: list[CuratedArticle],
+    *,
+    since: str,
+    today: str,
+    delivered_slugs: Collection[str] = (),
+) -> list[CuratedArticle]:
+    """Select unsent articles in an inclusive UTC date window."""
+    since_d = date_cls.fromisoformat(since)
+    today_d = date_cls.fromisoformat(today)
+    delivered = set(delivered_slugs)
+    return [
+        article
+        for article in articles
+        if since_d <= date_cls.fromisoformat(article.added_date) <= today_d
+        and article.slug not in delivered
+    ]
+
+
+def format_new_articles_section(
+    articles: list[CuratedArticle], *, base_url: str
+) -> str:
+    """Format already-selected articles for the email Markdown body."""
+    if not articles:
+        return ""
+    base = base_url.rstrip("/")
+    lines = ["\n\n## 本期新增精选文章\n"]
+    for article in articles:
+        url = f"{base}/articles/{article.slug}.html"
+        lines.append(
+            f"- **{article.title}** · {article.source_domain}\n"
+            f"  {article.summary}\n"
+            f"  [阅读全文]({url})"
+        )
+    return "\n".join(lines)
 
 
 def new_articles_section(
@@ -102,48 +118,49 @@ def new_articles_section(
     base_url: str,
     since: str,
     today: str,
+    delivered_slugs: Collection[str] = (),
 ) -> str:
     """Build the '## 本期新增精选文章' markdown section; '' when none qualify.
 
-    An article qualifies when ``since < added_date <= today``. Links are absolute
-    so they resolve in both plain-text and HTML email alternatives.
+    ``since`` is inclusive so an article added after an earlier same-day delivery
+    remains eligible. ``delivered_slugs`` prevents it from being sent twice.
     """
-    since_d = date_cls.fromisoformat(since)
-    today_d = date_cls.fromisoformat(today)
-    new = [
-        a
-        for a in articles
-        if since_d < date_cls.fromisoformat(a.added_date) <= today_d
-    ]
-    if not new:
-        return ""
-    base = base_url.rstrip("/")
-    lines = ["\n\n## 本期新增精选文章\n"]
-    for a in new:
-        url = f"{base}/articles/{a.slug}.html"
-        lines.append(
-            f"- **{a.title}** · {a.source_domain}\n"
-            f"  {a.summary}\n"
-            f"  [阅读全文]({url})"
-        )
-    return "\n".join(lines)
+    selected = select_new_articles(
+        articles,
+        since=since,
+        today=today,
+        delivered_slugs=delivered_slugs,
+    )
+    return format_new_articles_section(selected, base_url=base_url)
 
 
 # ---------- helpers ----------
 
-_IMG_ASSET_RE = re.compile(r"(!\[[^\]]*\]\()assets/")
 
-
-def _to_detail_relative(path: Optional[str]) -> Optional[str]:
-    """Rewrite a root-relative asset ref to detail-page-relative (../assets/)."""
+def _to_detail_relative(path: Optional[str], asset_map: dict[str, str]) -> Optional[str]:
+    """Resolve downloaded assets from the detail page's directory."""
     if not path:
         return None
+    if path in asset_map:
+        return "../" + asset_map[path]
     return "../" + path if path.startswith("assets/") else path
 
 
-def _render_markdown(md: str) -> str:
-    """Render markdown body, rewriting root-relative image refs to ../assets/."""
-    return markdown.markdown(_IMG_ASSET_RE.sub(r"\g<1>../assets/", md))
+def _render_markdown(md: str, asset_map: Optional[dict[str, str]] = None) -> str:
+    """Render markdown while rewriting only localised Markdown image URLs."""
+    asset_map = asset_map or {}
+
+    def rewrite(match: re.Match[str]) -> str:
+        source = markdown_image_url(match)
+        resolved = asset_map.get(source)
+        if resolved:
+            source = "../" + resolved
+        elif source.startswith("assets/"):
+            source = "../" + source
+        return f"{match.group('prefix')}{source}{match.group('suffix') or ''})"
+
+    rendered = markdown.markdown(MARKDOWN_IMAGE_RE.sub(rewrite, md))
+    return sanitize_html_fragment(rendered)
 
 
 def _page(title: str, body: str) -> str:
@@ -151,6 +168,10 @@ def _page(title: str, body: str) -> str:
         "<!DOCTYPE html>\n"
         '<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        '<meta http-equiv="Content-Security-Policy" '
+        'content="default-src \'none\'; img-src \'self\' https: data:; '
+        'media-src \'self\' https:; style-src \'unsafe-inline\'">\n'
+        '<link rel="icon" href="data:,">\n'
         f"<title>{_e(title)}</title>\n<style>{SITE_CSS}</style>\n</head>\n"
         f'<body>\n<div class="wrap">\n{body}\n</div>\n</body>\n</html>\n'
     )
@@ -199,13 +220,17 @@ def detail_page_html(
     )
 
     if article.intro:
-        parts.append(f'<div class="intro">{_render_markdown(article.intro)}</div>')
+        parts.append(
+            f'<div class="intro">{_render_markdown(article.intro, article.asset_map)}</div>'
+        )
 
-    cover = _to_detail_relative(article.cover)
+    cover = _to_detail_relative(article.cover, article.asset_map)
     if cover:
         parts.append(f'<img class="art-cover" src="{_e(cover)}" alt="">')
 
-    parts.append(f'<div class="prose">{_render_markdown(article.body_md)}</div>')
+    parts.append(
+        f'<div class="prose">{_render_markdown(article.body_md, article.asset_map)}</div>'
+    )
 
     nav = ['<nav class="pagenav">']
     if older:

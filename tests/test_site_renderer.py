@@ -4,7 +4,13 @@ import json
 from datetime import datetime, timezone
 
 from src.models import ContentItem, SiteConfig, SourceType
-from src.render.site import SiteRenderer
+from src.render.site import (
+    SiteRenderer,
+    archive_index_path,
+    daily_article_path,
+    daily_digest_path,
+    root_index_path,
+)
 
 
 def _item(tweet_id: str, title: str = "", **meta) -> ContentItem:
@@ -224,6 +230,49 @@ def test_root_index_redirects_to_latest(tmp_path):
     assert 'http-equiv="refresh"' in root
 
 
+def test_path_helpers_return_sectioned_site_paths():
+    assert daily_digest_path("2026-07-05").as_posix() == "daily/2026-07-05.html"
+    assert daily_article_path("900").as_posix() == "daily/article-900.html"
+    assert archive_index_path().as_posix() == "daily/index.html"
+    assert root_index_path().as_posix() == "index.html"
+
+
+def test_root_index_falls_back_to_daily_archive_without_history(tmp_path):
+    renderer = SiteRenderer(SiteConfig(enabled=True, output_dir=str(tmp_path)))
+
+    root = renderer._root_index_page({})
+
+    assert "url=daily/index.html" in root
+
+
+def test_render_migrates_legacy_daily_and_x_article_paths(tmp_path):
+    (tmp_path / "2026-07-04.html").write_text(
+        '<img src="assets/2026-07-04/photo.jpg">'
+        '<a href="articles/900.html">article</a>',
+        encoding="utf-8",
+    )
+    legacy_articles = tmp_path / "articles"
+    legacy_articles.mkdir()
+    (legacy_articles / "900.html").write_text(
+        '<a href="../2026-07-04.html#t-1">back</a>', encoding="utf-8"
+    )
+
+    _render(tmp_path, [_item("1")])
+
+    assert not (tmp_path / "2026-07-04.html").exists()
+    migrated_digest = (tmp_path / "daily" / "2026-07-04.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'src="../assets/2026-07-04/photo.jpg"' in migrated_digest
+    assert 'href="article-900.html"' in migrated_digest
+
+    assert not (legacy_articles / "900.html").exists()
+    migrated_article = (tmp_path / "daily" / "article-900.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'href="2026-07-04.html#t-1"' in migrated_article
+
+
 def test_dynamic_text_is_escaped(tmp_path):
     evil = _item(
         "10",
@@ -268,3 +317,4 @@ def test_digest_shows_articles_weekly_count(tmp_path):
     SiteRenderer(cfg).render(_six_shapes(), "2026-07-09", 18)
     digest = (tmp_path / "daily" / "2026-07-09.html").read_text(encoding="utf-8")
     assert "文章库本周 +1" in digest  # fixture added 2026-07-08 within 7 days
+    assert 'href="../articles/index.html">文章库本周 +1</a>' in digest

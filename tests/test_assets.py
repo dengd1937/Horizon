@@ -89,6 +89,10 @@ def _downloader(tmp_path, handler, max_mb: int = 50) -> MediaDownloader:
     return MediaDownloader(cfg, transport=httpx.MockTransport(handler))
 
 
+def _media_response(content: bytes = b"DATA", *, media_type: str = "image/jpeg"):
+    return httpx.Response(200, headers={"content-type": media_type}, content=content)
+
+
 def test_download_writes_files_and_asset_map(tmp_path):
     calls = []
 
@@ -96,7 +100,7 @@ def test_download_writes_files_and_asset_map(tmp_path):
         calls.append(str(request.url))
         if "missing" in str(request.url):
             return httpx.Response(404)
-        return httpx.Response(200, content=b"DATA")
+        return _media_response()
 
     item = _item(
         media=[
@@ -122,7 +126,7 @@ def test_download_idempotent_skips_existing(tmp_path):
 
     def handler(request: httpx.Request) -> httpx.Response:
         counter["n"] += 1
-        return httpx.Response(200, content=b"DATA")
+        return _media_response()
 
     item = _item(media=[{"type": "photo", "thumbnail_url": "https://p/ok.jpg"}])
     dl = _downloader(tmp_path, handler)
@@ -138,7 +142,7 @@ def test_download_shared_url_downloaded_once_mapped_to_all(tmp_path):
 
     def handler(request: httpx.Request) -> httpx.Response:
         counter["n"] += 1
-        return httpx.Response(200, content=b"DATA")
+        return _media_response()
 
     a = _item(media=[{"type": "photo", "thumbnail_url": "https://p/shared.jpg"}])
     b = _item(card={"thumbnail_url": "https://p/shared.jpg"})
@@ -153,9 +157,16 @@ def test_download_oversized_declared_and_streamed(tmp_path):
         url = str(request.url)
         if "declared" in url:
             return httpx.Response(
-                200, headers={"content-length": str(99 * 1024 * 1024)}, content=b"x"
+                200,
+                headers={
+                    "content-length": str(99 * 1024 * 1024),
+                    "content-type": "video/mp4",
+                },
+                content=b"x",
             )
-        return httpx.Response(200, content=b"y" * (2 * 1024 * 1024))
+        return _media_response(
+            b"y" * (2 * 1024 * 1024), media_type="video/mp4"
+        )
 
     item = _item(
         media=[
@@ -174,3 +185,84 @@ def test_download_no_urls_no_dir(tmp_path):
     dl = _downloader(tmp_path, lambda r: httpx.Response(200))
     assert asyncio.run(dl.download_for_items([_item()], "2026-07-05")) == 0
     assert not (tmp_path / "assets").exists()
+
+
+def test_download_urls_supports_article_asset_directory(tmp_path):
+    url = "https://media.example/cover.jpg"
+    dl = _downloader(tmp_path, lambda r: _media_response(b"IMAGE"))
+
+    mapping, downloaded = asyncio.run(
+        dl.download_urls([url, url], relative_dir="assets/articles/example-20260701-title")
+    )
+
+    assert downloaded == 1
+    assert mapping[url].startswith("assets/articles/example-20260701-title/")
+    assert (tmp_path / mapping[url]).read_bytes() == b"IMAGE"
+
+
+def test_download_urls_rejects_unsafe_directory(tmp_path):
+    dl = _downloader(tmp_path, lambda r: _media_response(b"IMAGE"))
+    with pytest.raises(ValueError, match="unsafe media relative directory"):
+        asyncio.run(dl.download_urls(["https://media.example/cover.jpg"], relative_dir="../x"))
+
+
+def test_download_rejects_non_media_response(tmp_path):
+    url = "https://media.example/not-an-image.jpg"
+    dl = _downloader(
+        tmp_path,
+        lambda r: httpx.Response(
+            200, headers={"content-type": "text/html"}, content=b"<script>x</script>"
+        ),
+    )
+
+    mapping, downloaded = asyncio.run(
+        dl.download_urls([url], relative_dir="assets/articles/test")
+    )
+
+    assert mapping == {}
+    assert downloaded == 0
+    assert not list((tmp_path / "assets" / "articles" / "test").iterdir())
+
+
+def test_download_revalidates_redirects_and_rejects_private_destination(tmp_path):
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if len(seen) == 1:
+            return httpx.Response(
+                302, headers={"location": "http://127.0.0.1:9999/internal"}
+            )
+        return _media_response(b"SECRET")
+
+    dl = _downloader(tmp_path, handler)
+    mapping, downloaded = asyncio.run(
+        dl.download_urls(
+            ["https://public.example/redirect.jpg"],
+            relative_dir="assets/articles/test",
+        )
+    )
+
+    assert seen == ["https://public.example/redirect.jpg"]
+    assert mapping == {}
+    assert downloaded == 0
+
+
+def test_download_rejects_plain_http_before_transport(tmp_path):
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return _media_response()
+
+    dl = _downloader(tmp_path, handler)
+    mapping, downloaded = asyncio.run(
+        dl.download_urls(
+            ["http://media.example/image.jpg"],
+            relative_dir="assets/articles/test",
+        )
+    )
+
+    assert seen == []
+    assert mapping == {}
+    assert downloaded == 0
