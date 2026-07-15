@@ -1,11 +1,14 @@
 """Tests for deterministic curated article ingestion."""
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from src.articles.contract import ArticleValidationError, load_article, slugify
+from src.articles.cli import main
 from src.articles.ingest import build_article_source, utc_added_date, write_article
 
 
@@ -174,3 +177,59 @@ def test_write_article_requires_slug_title_for_chinese_title(tmp_path):
         tmp_path / "articles", manifest, "body", added_date="2026-07-14"
     )
     assert result.article.slug == "example-com-20260701-chinese-title"
+
+
+def test_create_cli_validates_capture_and_writes_article(tmp_path, monkeypatch):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "title": "构建可靠的智能体",
+                "source_url": "https://example.com/agents",
+                "published_date": "2026-07-01",
+                "summary": "这是一篇经过完整校验的中文文章摘要。",
+                "slug_title": "building reliable agents",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    fetched = tmp_path / "fetched.md"
+    fetched.write_text(
+        "---\ntitle: Building reliable agents\n---\n\n"
+        "# Building reliable agents\n\n"
+        + "This complete source paragraph contains enough captured English prose. "
+        * 5,
+        encoding="utf-8",
+    )
+    body = tmp_path / "body.md"
+    body.write_text(
+        "# 构建可靠的智能体\n\n"
+        "这段完整的中文译文包含足够多的正文内容，用于验证命令行创建流程。",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "src.articles.cli.preflight",
+        lambda repo: SimpleNamespace(repo_root=str(tmp_path)),
+    )
+
+    assert (
+        main(
+            [
+                "create",
+                "--repo",
+                str(tmp_path),
+                "--manifest",
+                str(manifest),
+                "--fetched",
+                str(fetched),
+                "--body",
+                str(body),
+                "--added-date",
+                "2026-07-15",
+            ]
+        )
+        == 0
+    )
+    created = tmp_path / "articles" / "example-com-20260701-building-reliable-agents.md"
+    assert load_article(created).title == "构建可靠的智能体"

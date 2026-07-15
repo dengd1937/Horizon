@@ -6,7 +6,12 @@ import sys
 from pathlib import Path
 
 from .contract import ArticleValidationError, load_article
-from .fetch import FetchError, load_reader_command, run_baoyu_fetch
+from .fetch import (
+    FetchError,
+    load_reader_command,
+    run_baoyu_fetch,
+    validate_fetch_output,
+)
 from .ingest import load_manifest, write_article
 from .preview import PreviewError, preview_result_json, render_article_preview
 from .publication import (
