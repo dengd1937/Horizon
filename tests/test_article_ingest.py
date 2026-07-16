@@ -9,7 +9,12 @@ import pytest
 
 from src.articles.contract import ArticleValidationError, load_article, slugify
 from src.articles.cli import main
-from src.articles.ingest import build_article_source, utc_added_date, write_article
+from src.articles.ingest import (
+    build_article_source,
+    utc_added_date,
+    write_article,
+    write_articles,
+)
 
 
 def _manifest(**overrides):
@@ -167,6 +172,53 @@ def test_duplicate_url_and_slug_never_overwrite(tmp_path):
     assert len(list(source_dir.glob("*.md"))) == 1
 
 
+def test_write_articles_creates_a_validated_batch_without_partial_writes(tmp_path):
+    source_dir = tmp_path / "articles"
+    results = write_articles(
+        source_dir,
+        [
+            (_manifest(), "First body."),
+            (
+                _manifest(
+                    title="Second Article",
+                    source_url="https://example.com/posts/two",
+                ),
+                "Second body.",
+            ),
+        ],
+        added_date="2026-07-14",
+    )
+
+    assert [result.article.source_url for result in results] == [
+        "https://www.Example.com/posts/one",
+        "https://example.com/posts/two",
+    ]
+    assert len(list(source_dir.glob("*.md"))) == 2
+
+    with pytest.raises(ArticleValidationError, match="appears more than once"):
+        write_articles(
+            source_dir,
+            [
+                (
+                    _manifest(
+                        title="Third Article",
+                        source_url="https://example.com/posts/three",
+                    ),
+                    "Third body.",
+                ),
+                (
+                    _manifest(
+                        title="Fourth Article",
+                        source_url="https://example.com/posts/three",
+                    ),
+                    "Fourth body.",
+                ),
+            ],
+            added_date="2026-07-14",
+        )
+    assert len(list(source_dir.glob("*.md"))) == 2
+
+
 def test_write_article_requires_slug_title_for_chinese_title(tmp_path):
     manifest = _manifest(title="纯中文标题")
     with pytest.raises(ArticleValidationError, match="slug_title is required"):
@@ -233,3 +285,69 @@ def test_create_cli_validates_capture_and_writes_article(tmp_path, monkeypatch):
     )
     created = tmp_path / "articles" / "example-com-20260701-building-reliable-agents.md"
     assert load_article(created).title == "构建可靠的智能体"
+
+
+def test_batch_create_cli_validates_all_inputs_before_writing(
+    tmp_path, monkeypatch, capsys
+):
+    items: list[dict[str, str]] = []
+    for index, slug in enumerate(("one", "two"), start=1):
+        manifest = tmp_path / f"manifest-{slug}.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "title": f"批量文章{index}",
+                    "source_url": f"https://example.com/batch-{slug}",
+                    "published_date": "2026-07-01",
+                    "summary": f"批量导入文章{index}的中文摘要。",
+                    "slug_title": f"batch article {slug}",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        fetched = tmp_path / f"fetched-{slug}.md"
+        fetched.write_text(
+            "---\ntitle: Batch article\n---\n\n"
+            "# Batch article\n\n"
+            + "This complete captured paragraph has enough source text for validation. "
+            * 5,
+            encoding="utf-8",
+        )
+        body = tmp_path / f"body-{slug}.md"
+        body.write_text(
+            "# 批量文章\n\n"
+            "这段完整的中文译文保留了原文结构，并用于批量创建命令的校验。",
+            encoding="utf-8",
+        )
+        items.append(
+            {
+                "manifest": str(manifest),
+                "fetched": str(fetched),
+                "body": str(body),
+            }
+        )
+    item_file = tmp_path / "items.json"
+    item_file.write_text(json.dumps({"items": items}), encoding="utf-8")
+    monkeypatch.setattr(
+        "src.articles.cli.preflight",
+        lambda repo: SimpleNamespace(repo_root=str(tmp_path)),
+    )
+
+    assert (
+        main(
+            [
+                "batch-create",
+                "--repo",
+                str(tmp_path),
+                "--items",
+                str(item_file),
+                "--added-date",
+                "2026-07-15",
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
+    assert len(output["articles"]) == 2
+    assert len(list((tmp_path / "articles").glob("*.md"))) == 2

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Horizon Add Article"
-  short_description: "Translate and add or preview one Horizon article"
-  default_prompt: "Use $horizon-add-article to translate this URL into Chinese, then add or locally preview it in Horizon."
+  display_name: "Horizon Add Articles"
+  short_description: "Translate, preview, and batch-add Horizon articles"
+  default_prompt: "Use $horizon-add-article to translate and add or preview these article URLs in Horizon."

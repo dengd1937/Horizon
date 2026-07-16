@@ -53,12 +53,76 @@ class ReviewState:
 
 
 @dataclass(frozen=True)
+class BatchReviewArticle:
+    article_path: str
+    article_sha256: str
+
+    @classmethod
+    def from_dict(cls, value: object) -> "BatchReviewArticle":
+        if not isinstance(value, dict):
+            raise PublicationError("invalid batch review article entry")
+        try:
+            entry = cls(**value)
+        except TypeError as exc:
+            raise PublicationError(f"invalid batch review article entry: {exc}") from exc
+        if not entry.article_path or not entry.article_sha256:
+            raise PublicationError("invalid batch review article entry")
+        return entry
+
+
+@dataclass(frozen=True)
+class BatchReviewState:
+    version: int
+    repo_root: str
+    articles: tuple[BatchReviewArticle, ...]
+    diff_sha256: str
+    base_head: str
+    remote_sha: str
+    remote: str
+    branch: str
+    commit_message: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "BatchReviewState":
+        raw_articles = value.get("articles")
+        if not isinstance(raw_articles, list):
+            raise PublicationError("batch review state must contain an article list")
+        fields = {key: item for key, item in value.items() if key != "articles"}
+        try:
+            state = cls(
+                articles=tuple(
+                    BatchReviewArticle.from_dict(item) for item in raw_articles
+                ),
+                **fields,
+            )
+        except TypeError as exc:
+            raise PublicationError(f"invalid batch review state: {exc}") from exc
+        if state.version != 1:
+            raise PublicationError(
+                f"unsupported batch review state version: {state.version}"
+            )
+        if len(state.articles) < 2:
+            raise PublicationError("batch review state must contain at least two articles")
+        return state
+
+
+@dataclass(frozen=True)
 class CommitResult:
     commit_sha: str
     article_path: str
     commit_message: str
 
     def as_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class BatchCommitResult:
+    commit_sha: str
+    article_paths: tuple[str, ...]
+    commit_message: str
+
+    def as_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -223,6 +287,13 @@ def canonical_new_file_diff(relative: str, content: str) -> str:
     )
 
 
+def canonical_new_file_diffs(entries: Sequence[tuple[str, str]]) -> str:
+    """Return deterministic diffs for a batch of newly created articles."""
+    return "".join(
+        canonical_new_file_diff(relative, content) for relative, content in entries
+    )
+
+
 def build_review(repo: Path, article_path: Path) -> tuple[ReviewState, str]:
     """Bind the exact article, diff, HEAD, and target that the user reviews."""
     snapshot = preflight(repo)
@@ -245,7 +316,43 @@ def build_review(repo: Path, article_path: Path) -> tuple[ReviewState, str]:
     return state, diff
 
 
-def save_review_state(state: ReviewState, output: Path) -> None:
+def build_batch_review(
+    repo: Path, article_paths: Sequence[Path]
+) -> tuple[BatchReviewState, str]:
+    """Bind a deterministic multi-article diff to one publication approval."""
+    if len(article_paths) < 2:
+        raise PublicationError("batch review requires at least two article paths")
+    snapshot = preflight(repo)
+    root = Path(snapshot.repo_root)
+    entries: list[tuple[Path, str]] = []
+    for article_path in article_paths:
+        path, relative = _relative_article_path(root, article_path)
+        entries.append((path, relative))
+    entries.sort(key=lambda item: item[1])
+    relative_paths = [relative for _, relative in entries]
+    if len(set(relative_paths)) != len(relative_paths):
+        raise PublicationError("batch review contains duplicate article paths")
+    state_entries = tuple(
+        BatchReviewArticle(relative, _file_sha256(path)) for path, relative in entries
+    )
+    diff = canonical_new_file_diffs(
+        [(relative, path.read_text(encoding="utf-8")) for path, relative in entries]
+    )
+    state = BatchReviewState(
+        version=1,
+        repo_root=str(root),
+        articles=state_entries,
+        diff_sha256=hashlib.sha256(diff.encode("utf-8")).hexdigest(),
+        base_head=snapshot.head,
+        remote_sha=snapshot.remote_sha,
+        remote=PUBLICATION_REMOTE,
+        branch=PUBLICATION_BRANCH,
+        commit_message=f"clip(articles): import {len(state_entries)} articles",
+    )
+    return state, diff
+
+
+def save_review_state(state: ReviewState | BatchReviewState, output: Path) -> None:
     """Persist review state outside the repository for the approval boundary."""
     root = Path(state.repo_root)
     output = output.expanduser().resolve()
@@ -269,6 +376,16 @@ def load_review_state(path: Path) -> ReviewState:
     return ReviewState.from_dict(value)
 
 
+def load_batch_review_state(path: Path) -> BatchReviewState:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PublicationError(f"cannot read batch review state {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise PublicationError("batch review state must contain a JSON object")
+    return BatchReviewState.from_dict(value)
+
+
 def _assert_review_unchanged(
     state: ReviewState, *, fetch: bool = True
 ) -> tuple[Path, Path, str]:
@@ -289,6 +406,35 @@ def _assert_review_unchanged(
     return root, path, relative
 
 
+def _assert_batch_review_unchanged(
+    state: BatchReviewState, *, fetch: bool = True
+) -> tuple[Path, list[tuple[Path, str]]]:
+    root = validate_horizon_workspace(Path(state.repo_root))
+    snapshot = preflight(root, fetch=fetch)
+    if snapshot.head != state.base_head or snapshot.remote_sha != state.remote_sha:
+        raise PublicationError("HEAD or remote changed after review; generate a new review")
+    if state.remote != PUBLICATION_REMOTE or state.branch != PUBLICATION_BRANCH:
+        raise PublicationError("review targets a non-publication remote or branch")
+    entries: list[tuple[Path, str]] = []
+    for entry in state.articles:
+        path, relative = _relative_article_path(root, root / entry.article_path)
+        if relative != entry.article_path or _file_sha256(path) != entry.article_sha256:
+            raise PublicationError("article changed after review; generate a new review")
+        entries.append((path, relative))
+    if [relative for _, relative in entries] != sorted(
+        relative for _, relative in entries
+    ) or len({relative for _, relative in entries}) != len(entries):
+        raise PublicationError("batch review contains invalid article paths")
+    diff = canonical_new_file_diffs(
+        [(relative, path.read_text(encoding="utf-8")) for path, relative in entries]
+    )
+    if hashlib.sha256(diff.encode("utf-8")).hexdigest() != state.diff_sha256:
+        raise PublicationError("article diff changed after review; generate a new review")
+    if state.commit_message != f"clip(articles): import {len(entries)} articles":
+        raise PublicationError("review contains an invalid commit message")
+    return root, entries
+
+
 def discard_review(state: ReviewState) -> str:
     """Delete an uncommitted reviewed file only when its approved hash is unchanged."""
     root, path, relative = _assert_review_unchanged(state, fetch=False)
@@ -296,6 +442,18 @@ def discard_review(state: ReviewState) -> str:
         raise PublicationError("cannot discard a staged article")
     path.unlink()
     return relative
+
+
+def discard_batch_review(state: BatchReviewState) -> list[str]:
+    """Delete an unchanged batch only after checking every reviewed article."""
+    root, entries = _assert_batch_review_unchanged(state, fetch=False)
+    staged = _staged_paths(root)
+    relative_paths = [relative for _, relative in entries]
+    if any(relative in staged for relative in relative_paths):
+        raise PublicationError("cannot discard a staged article")
+    for path, _ in entries:
+        path.unlink()
+    return relative_paths
 
 
 def commit_review(state: ReviewState) -> CommitResult:
@@ -339,6 +497,54 @@ def commit_review(state: ReviewState) -> CommitResult:
     return CommitResult(commit_sha, relative, message)
 
 
+def commit_batch_review(state: BatchReviewState) -> BatchCommitResult:
+    """Commit exactly the reviewed batch while preserving unrelated worktree state."""
+    root, entries = _assert_batch_review_unchanged(state)
+    relative_paths = [relative for _, relative in entries]
+    try:
+        _run(root, ["git", "add", "--", *relative_paths])
+        staged = _staged_paths(root)
+        if set(staged) != set(relative_paths) or len(staged) != len(relative_paths):
+            raise PublicationError(
+                "staged paths changed during publication: " + ", ".join(staged)
+            )
+        _run(root, ["git", "diff", "--cached", "--check"])
+        _run(root, ["git", "commit", "-m", state.commit_message])
+    except Exception:
+        staged = _staged_paths(root)
+        restore = [relative for relative in relative_paths if relative in staged]
+        if restore:
+            _run(root, ["git", "restore", "--staged", "--", *restore])
+        raise
+
+    commit_sha = _run(root, ["git", "rev-parse", "HEAD"]).stdout.strip()
+    parent = _run(root, ["git", "rev-parse", f"{commit_sha}^1"]).stdout.strip()
+    if parent != state.base_head:
+        raise PublicationError("created commit has an unexpected parent")
+    paths = sorted(
+        line
+        for line in _run(
+            root,
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_sha],
+        ).stdout.splitlines()
+        if line
+    )
+    if paths != relative_paths:
+        raise PublicationError("created commit contains unexpected paths")
+    message = _run(root, ["git", "show", "-s", "--format=%s", commit_sha]).stdout.strip()
+    if message != state.commit_message:
+        raise PublicationError("created commit message differs from the review")
+    diff = canonical_new_file_diffs(
+        [
+            (relative, _run(root, ["git", "show", f"{commit_sha}:{relative}"]).stdout)
+            for relative in relative_paths
+        ]
+    )
+    if hashlib.sha256(diff.encode("utf-8")).hexdigest() != state.diff_sha256:
+        raise PublicationError("created commit differs from the reviewed diff")
+    return BatchCommitResult(commit_sha, tuple(relative_paths), message)
+
+
 def _assert_commit_matches_review(
     root: Path, state: ReviewState, commit_sha: str
 ) -> None:
@@ -364,6 +570,39 @@ def _assert_commit_matches_review(
         raise PublicationError("reviewed commit content differs from approval")
 
 
+def _assert_commit_matches_batch_review(
+    root: Path, state: BatchReviewState, commit_sha: str
+) -> None:
+    parent = _run(root, ["git", "rev-parse", f"{commit_sha}^1"]).stdout.strip()
+    if parent != state.base_head or parent != state.remote_sha:
+        raise PublicationError("reviewed commit has an unexpected parent")
+    expected_paths = [entry.article_path for entry in state.articles]
+    paths = sorted(
+        line
+        for line in _run(
+            root,
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_sha],
+        ).stdout.splitlines()
+        if line
+    )
+    if paths != expected_paths:
+        raise PublicationError("reviewed commit contains unexpected paths")
+    message = _run(root, ["git", "show", "-s", "--format=%s", commit_sha]).stdout.strip()
+    if message != state.commit_message:
+        raise PublicationError("reviewed commit message differs from approval")
+    diff = canonical_new_file_diffs(
+        [
+            (
+                entry.article_path,
+                _run(root, ["git", "show", f"{commit_sha}:{entry.article_path}"]).stdout,
+            )
+            for entry in state.articles
+        ]
+    )
+    if hashlib.sha256(diff.encode("utf-8")).hexdigest() != state.diff_sha256:
+        raise PublicationError("reviewed commit content differs from approval")
+
+
 def push_review(state: ReviewState, commit_sha: str) -> dict[str, Any]:
     """Push the reviewed commit to the one fixed publication ref, without force."""
     root = validate_horizon_workspace(Path(state.repo_root))
@@ -379,6 +618,39 @@ def push_review(state: ReviewState, commit_sha: str) -> dict[str, Any]:
     if current_remote != state.remote_sha:
         raise PublicationError("publication branch moved after review; do not retry blindly")
 
+    _run(
+        root,
+        [
+            "git",
+            "push",
+            PUBLICATION_REMOTE,
+            f"{commit_sha}:refs/heads/{PUBLICATION_BRANCH}",
+        ],
+    )
+    remote_line = _run(
+        root,
+        ["git", "ls-remote", PUBLICATION_REMOTE, f"refs/heads/{PUBLICATION_BRANCH}"],
+    ).stdout.strip()
+    remote_sha = remote_line.split()[0] if remote_line else ""
+    if remote_sha != commit_sha:
+        raise PublicationError("remote publication ref does not match the pushed commit")
+    return {"commit_sha": commit_sha, "already_pushed": False}
+
+
+def push_batch_review(state: BatchReviewState, commit_sha: str) -> dict[str, Any]:
+    """Push one reviewed batch to the fixed publication branch without force."""
+    root = validate_horizon_workspace(Path(state.repo_root))
+    head = _run(root, ["git", "rev-parse", "HEAD"]).stdout.strip()
+    if head != commit_sha:
+        raise PublicationError("current HEAD is not the reviewed commit")
+    _assert_commit_matches_batch_review(root, state, commit_sha)
+    _fetch_publication_ref(root)
+    remote_ref = f"refs/remotes/{PUBLICATION_REMOTE}/{PUBLICATION_BRANCH}"
+    current_remote = _run(root, ["git", "rev-parse", remote_ref]).stdout.strip()
+    if current_remote == commit_sha:
+        return {"commit_sha": commit_sha, "already_pushed": True}
+    if current_remote != state.remote_sha:
+        raise PublicationError("publication branch moved after review; do not retry blindly")
     _run(
         root,
         [

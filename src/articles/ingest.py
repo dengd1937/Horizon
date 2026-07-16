@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 import yaml
 
@@ -131,24 +131,17 @@ def write_article(
     added_date: Optional[str] = None,
 ) -> IngestResult:
     """Validate and atomically create one article without overwriting existing data."""
-    article, source_text = build_article_source(
-        manifest, body_md, added_date=added_date
-    )
+    return write_articles(
+        source_dir, [(manifest, body_md)], added_date=added_date
+    )[0]
+
+
+def _write_source_atomically(destination: Path, payload: bytes) -> None:
+    """Create one source file without replacing an existing article."""
+    source_dir = destination.parent
     source_dir.mkdir(parents=True, exist_ok=True)
-
-    for existing in load_articles(source_dir):
-        if existing.source_url == article.source_url:
-            raise ArticleValidationError(
-                f"source_url already exists in {existing.slug}.md"
-            )
-
-    destination = source_dir / f"{article.slug}.md"
-    if destination.exists():
-        raise ArticleValidationError(f"article already exists: {destination.name}")
-
-    payload = source_text.encode("utf-8")
     fd, temporary_name = tempfile.mkstemp(
-        prefix=f".{article.slug}.", suffix=".tmp", dir=source_dir
+        prefix=f".{destination.stem}.", suffix=".tmp", dir=source_dir
     )
     temporary = Path(temporary_name)
     try:
@@ -172,19 +165,76 @@ def write_article(
     finally:
         temporary.unlink(missing_ok=True)
 
+
+def write_articles(
+    source_dir: Path,
+    entries: Sequence[tuple[Mapping[str, Any], str]],
+    *,
+    added_date: Optional[str] = None,
+) -> list[IngestResult]:
+    """Validate a batch first, then create every article without overwriting data."""
+    if not entries:
+        raise ArticleValidationError("article batch must contain at least one item")
+
+    prepared = [
+        build_article_source(manifest, body_md, added_date=added_date)
+        for manifest, body_md in entries
+    ]
+    existing = load_articles(source_dir)
+    existing_urls = {article.source_url for article in existing}
+    batch_urls: set[str] = set()
+    destinations: list[Path] = []
+    destination_set: set[Path] = set()
+    for article, _ in prepared:
+        if article.source_url in existing_urls:
+            existing_slug = next(
+                item.slug
+                for item in existing
+                if item.source_url == article.source_url
+            )
+            raise ArticleValidationError(
+                f"source_url already exists in {existing_slug}.md"
+            )
+        if article.source_url in batch_urls:
+            raise ArticleValidationError(
+                f"source_url appears more than once in article batch: {article.source_url}"
+            )
+        batch_urls.add(article.source_url)
+        destination = source_dir / f"{article.slug}.md"
+        if destination in destination_set:
+            raise ArticleValidationError(
+                f"article batch contains duplicate slug: {destination.name}"
+            )
+        if destination.exists():
+            raise ArticleValidationError(f"article already exists: {destination.name}")
+        destinations.append(destination)
+        destination_set.add(destination)
+
+    created: list[IngestResult] = []
     try:
-        validated = parse_article_text(
-            destination.read_text(encoding="utf-8"), destination
-        )
+        for (article, source_text), destination in zip(prepared, destinations):
+            payload = source_text.encode("utf-8")
+            _write_source_atomically(destination, payload)
+            try:
+                validated = parse_article_text(
+                    destination.read_text(encoding="utf-8"), destination
+                )
+            except Exception:
+                destination.unlink(missing_ok=True)
+                raise
+            created.append(
+                IngestResult(
+                    path=destination,
+                    article=validated,
+                    sha256=hashlib.sha256(payload).hexdigest(),
+                    commit_message=f"clip(article): {article.slug}",
+                )
+            )
     except Exception:
-        destination.unlink(missing_ok=True)
+        for result in created:
+            result.path.unlink(missing_ok=True)
         raise
-    return IngestResult(
-        path=destination,
-        article=validated,
-        sha256=hashlib.sha256(payload).hexdigest(),
-        commit_message=f"clip(article): {article.slug}",
-    )
+    return created
 
 
 def load_manifest(path: Path) -> dict[str, Any]:

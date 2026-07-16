@@ -6,14 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from src.articles.ingest import write_article
+from src.articles.ingest import write_article, write_articles
 from src.articles.publication import (
     PublicationError,
+    build_batch_review,
     build_review,
+    commit_batch_review,
     commit_review,
+    discard_batch_review,
     discard_review,
     preflight,
     push_review,
+    push_batch_review,
     query_workflow_run,
     save_review_state,
 )
@@ -80,6 +84,23 @@ def _new_article(repo: Path):
     )
 
 
+def _new_article_batch(repo: Path):
+    return write_articles(
+        repo / "articles",
+        [
+            (_manifest(), "First batch publication body."),
+            (
+                _manifest(
+                    title="Second Publication Safety",
+                    source_url="https://example.com/publication-safety-two",
+                ),
+                "Second batch publication body.",
+            ),
+        ],
+        added_date="2026-07-14",
+    )
+
+
 def test_preflight_allows_unstaged_but_rejects_staged(git_workspace):
     repo, _ = git_workspace
     (repo / "notes.txt").write_text("untracked\n")
@@ -91,6 +112,47 @@ def test_preflight_allows_unstaged_but_rejects_staged(git_workspace):
     with pytest.raises(PublicationError, match="index already contains"):
         preflight(repo)
     assert _git(repo, "diff", "--cached", "--name-only") == staged_before
+
+
+def test_batch_review_commits_and_pushes_only_approved_articles(git_workspace, tmp_path):
+    repo, remote = git_workspace
+    first, second = _new_article_batch(repo)
+    state, diff = build_batch_review(repo, [second.path, first.path])
+    state_path = tmp_path / "batch-review.json"
+    save_review_state(state, state_path)
+
+    assert diff.index(first.path.name) < diff.index(second.path.name)
+    assert json.loads(state_path.read_text())["commit_message"] == (
+        "clip(articles): import 2 articles"
+    )
+    committed = commit_batch_review(state)
+    assert committed.article_paths == tuple(
+        sorted(
+            (
+                f"articles/{first.path.name}",
+                f"articles/{second.path.name}",
+            )
+        )
+    )
+    assert _git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD") == (
+        "\n".join(committed.article_paths)
+    )
+
+    pushed = push_batch_review(state, committed.commit_sha)
+    assert pushed == {"commit_sha": committed.commit_sha, "already_pushed": False}
+    assert _git(remote, "rev-parse", "refs/heads/main") == committed.commit_sha
+
+
+def test_batch_discard_requires_every_article_to_remain_unchanged(git_workspace):
+    repo, _ = git_workspace
+    first, second = _new_article_batch(repo)
+    state, _ = build_batch_review(repo, [first.path, second.path])
+    second.path.write_text(second.path.read_text() + "changed\n")
+
+    with pytest.raises(PublicationError, match="changed after review"):
+        discard_batch_review(state)
+    assert first.path.is_file()
+    assert second.path.is_file()
 
 
 def test_review_change_requires_new_approval(git_workspace, tmp_path):
