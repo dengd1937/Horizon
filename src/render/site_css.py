@@ -113,6 +113,71 @@ details[open] summary::before { transform: rotate(90deg); }
 details[open] summary { color: var(--ink); border-bottom: 1px dashed var(--line); }
 details .fold-body { padding: 12px 16px 14px; font-size: 14.5px; color: var(--sub); }
 
+details.tweet-fold { border: 0; border-radius: 0; margin-top: 0; }
+details.tweet-fold > summary {
+  padding: 0; color: inherit; border: 0; border-radius: 14px;
+}
+details.tweet-fold > summary::before { display: none; }
+details.tweet-fold[open] > summary { border: 0; color: inherit; }
+.tweet-preview {
+  display: block; background: var(--card); border: 1px solid var(--card-line);
+  border-radius: 14px; padding: 15px 18px 12px;
+}
+.tweet-preview-content { display: block; }
+.tweet-preview-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 10px;
+  font-size: 13.5px; color: var(--sub); margin-bottom: 7px;
+}
+.tweet-preview-head b { color: var(--ink); font-size: 14.5px; font-weight: 600; }
+.tweet-preview-facts {
+  margin-left: auto; font-family: var(--mono); font-size: 11.5px;
+  color: var(--signal);
+}
+.tweet-preview-text {
+  display: -webkit-box; overflow: hidden; overflow-wrap: break-word;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+  white-space: pre-line; font-size: 15px; line-height: 1.7; color: var(--ink);
+}
+.tweet-preview-media {
+  display: block; position: relative; margin-top: 12px; overflow: hidden;
+  border: 1px solid var(--card-line); border-radius: 10px; background: var(--hatch);
+}
+.tweet-preview-media img {
+  width: 100%; max-height: 320px; display: block; object-fit: cover;
+}
+.media-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 48px; height: 48px; display: grid; place-items: center;
+  border-radius: 50%; color: #fff; background: #111A; border: 1px solid #FFF8;
+  padding-left: 3px; font-size: 18px;
+}
+.media-more {
+  position: absolute; right: 10px; top: 10px; padding: 2px 8px;
+  border-radius: 5px; background: #111C; color: #fff;
+  font-family: var(--mono); font-size: 11.5px;
+}
+.tweet-preview-media.media-placeholder { min-height: 170px; }
+.media-placeholder-label {
+  position: absolute; left: 50%; top: calc(50% + 38px); transform: translateX(-50%);
+  color: var(--sub); font-family: var(--mono); font-size: 12px;
+}
+.tweet-fold-action {
+  display: block; margin-top: 10px; color: var(--accent);
+  font-size: 13px; font-weight: 500;
+}
+.tweet-fold-action::before {
+  content: "\\25B8"; display: inline-block; margin-right: 7px;
+  transition: transform .15s;
+}
+.tweet-fold[open] .tweet-fold-action::before { transform: rotate(90deg); }
+.tweet-fold .when-open { display: none; }
+.tweet-fold[open] .when-closed { display: none; }
+.tweet-fold[open] .when-open { display: inline; }
+.tweet-fold[open] .tweet-preview-content { display: none; }
+.tweet-fold[open] .tweet-preview { padding-bottom: 10px; }
+.tweet-fold[open] .tweet-fold-action { margin-top: 0; }
+.tweet-fold-body { padding-top: 10px; }
+
 .tweet {
   background: var(--card); border: 1px solid var(--card-line); border-radius: 14px;
   padding: 16px 18px; font-size: 15px; line-height: 1.7;
@@ -264,6 +329,12 @@ details .fold-body { padding: 12px 16px 14px; font-size: 14.5px; color: var(--su
   .mast h1 { font-size: 36px; }
   .item h2 { font-size: 20px; }
   .tweet { padding: 13px 14px; }
+  .tweet-preview { padding: 13px 14px 11px; }
+  .tweet-preview-facts { width: 100%; margin-left: 0; }
+  .tweet-preview-media img { max-height: 230px; }
+  .tweet-preview-media.media-placeholder { min-height: 140px; }
+  .media-play { width: 42px; height: 42px; }
+  .media.grid { grid-template-columns: 1fr; }
   .item:target::before { left: -12px; }
   .art-title { font-size: 26px; }
   .prose { font-size: 16px; }

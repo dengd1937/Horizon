@@ -38,6 +38,7 @@ ENV/
 
 # Data files (keep structure, ignore content)
 data/config.json
+data/email_delivery_state.json
 data/seen.json
 data/summaries/*.md
 data/subscribers.json

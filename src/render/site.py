@@ -31,6 +31,8 @@ _LEGACY_DAILY_BACK_HREF_RE = re.compile(
     r'(href=["\'])\.\./(\d{4}-\d{2}-\d{2}\.html(?:#[^"\']*)?)(["\'])'
 )
 _WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"]
+_TWEET_FOLD_CHAR_LIMIT = 240
+_TWEET_FOLD_NEWLINE_LIMIT = 4
 
 
 def daily_digest_path(date: str) -> Path:
@@ -318,7 +320,7 @@ class SiteRenderer:
             f'<span class="score">{_e(_fmt_score(item))}</span></div>\n'
             f"<h2>{_e(_zh_title(item))}</h2>\n"
             f"{summary_html}"
-            f"{self._tweet_card(item, resolver)}\n"
+            f"{self._original_tweet_html(item, resolver)}\n"
             f'{"".join(folds)}\n'
             f'<p class="meta">{"".join(meta_parts)}</p>\n'
             "</article>\n"
@@ -326,10 +328,173 @@ class SiteRenderer:
 
     # ---------- tweet cards ----------
 
-    def _tweet_card(self, item: ContentItem, resolver) -> str:
+    def _original_tweet_html(self, item: ContentItem, resolver) -> str:
+        """Render a tweet directly or behind a media-aware native fold."""
+        should_fold = self._should_fold_tweet(item)
+        full_card = self._tweet_card(
+            item,
+            resolver,
+            autoplay_gif=not should_fold,
+        )
+        if not should_fold:
+            return full_card
+
+        author, label, preview_text = self._tweet_preview_copy(item)
+        media = self._ordered_tweet_media(item)
+        media_preview = self._media_preview_html(media, resolver)
+        facts = self._tweet_preview_facts(item, media)
+        facts_html = f'<span class="tweet-preview-facts">{_e(facts)}</span>' if facts else ""
+
+        return (
+            '<details class="tweet-fold">'
+            '<summary>'
+            '<span class="tweet-preview">'
+            '<span class="tweet-preview-content">'
+            '<span class="tweet-preview-head">'
+            f'<b>@{_e(author)}</b><span>{_e(label)}</span>'
+            f"{facts_html}</span>"
+            f'<span class="tweet-preview-text">{_e(preview_text)}</span>'
+            f"{media_preview}"
+            '</span>'
+            '<span class="tweet-fold-action">'
+            '<span class="when-closed">展开原推文</span>'
+            '<span class="when-open">收起原推文</span>'
+            '</span>'
+            '</span>'
+            '</summary>'
+            f'<div class="tweet-fold-body">{full_card}</div>'
+            '</details>'
+        )
+
+    @staticmethod
+    def _should_fold_tweet(item: ContentItem) -> bool:
+        meta = item.metadata
+        thread_parts = meta.get("thread_parts") or []
+        if len(thread_parts) > 1:
+            return True
+        if meta.get("is_quote"):
+            return True
+        if meta.get("is_retweet") and meta.get("quoted_text"):
+            return True
+
+        if meta.get("is_retweet"):
+            text = str(meta.get("rt_original_text") or _tweet_body(item))
+        else:
+            text = _tweet_body(item)
+        return (
+            len(text) > _TWEET_FOLD_CHAR_LIMIT
+            or text.count("\n") >= _TWEET_FOLD_NEWLINE_LIMIT
+        )
+
+    @staticmethod
+    def _tweet_preview_copy(item: ContentItem) -> tuple[str, str, str]:
+        meta = item.metadata
+        thread_parts = meta.get("thread_parts") or []
+        if thread_parts:
+            return (
+                item.author or "unknown",
+                f"串推 {len(thread_parts)} 条",
+                str(thread_parts[0].get("text") or _tweet_body(item)),
+            )
+        if meta.get("is_retweet"):
+            return (
+                str(meta.get("rt_original_author") or "unknown"),
+                f"@{item.author or 'unknown'} 转推",
+                str(meta.get("rt_original_text") or _tweet_body(item)),
+            )
+        if meta.get("is_quote") and meta.get("qrt_comment"):
+            return (
+                item.author or "unknown",
+                "引用推文",
+                str(meta.get("qrt_comment")),
+            )
+        if meta.get("is_quote") and meta.get("quoted_text"):
+            return (
+                str(meta.get("quoted_author") or "unknown"),
+                f"@{item.author or 'unknown'} 引用",
+                str(meta.get("quoted_text")),
+            )
+        return item.author or "unknown", "原推文", _tweet_body(item)
+
+    @staticmethod
+    def _ordered_tweet_media(item: ContentItem) -> list[dict]:
+        """Collect media in preview priority order and remove duplicates."""
+        meta = item.metadata
+        groups: list[list[dict]] = []
+        thread_parts = meta.get("thread_parts") or []
+        if thread_parts:
+            groups.append(thread_parts[0].get("media") or [])
+            groups.append(meta.get("quoted_media") or [])
+            groups.extend(part.get("media") or [] for part in thread_parts[1:])
+            groups.append(meta.get("media") or [])
+        else:
+            groups.append(meta.get("media") or [])
+            groups.append(meta.get("quoted_media") or [])
+
+        ordered: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        for group in groups:
+            for media in group:
+                key = (
+                    str(media.get("type") or ""),
+                    str(media.get("thumbnail_url") or ""),
+                    str(media.get("mp4_url") or ""),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                ordered.append(media)
+        return ordered
+
+    @staticmethod
+    def _tweet_preview_facts(item: ContentItem, media: list[dict]) -> str:
+        facts = []
+        thread_parts = item.metadata.get("thread_parts") or []
+        if len(thread_parts) > 1:
+            facts.append(f"{len(thread_parts)} 段")
+        photos = sum(1 for m in media if m.get("type") == "photo")
+        videos = sum(
+            1 for m in media if m.get("type") in {"video", "animated_gif"}
+        )
+        if photos:
+            facts.append(f"{photos} 张图片")
+        if videos:
+            facts.append(f"{videos} 个视频")
+        return " · ".join(facts)
+
+    def _media_preview_html(self, media: list[dict], resolver) -> str:
+        if not media:
+            return ""
+        representative = media[0]
+        mtype = representative.get("type")
+        thumb = resolver(representative.get("thumbnail_url") or "")
+        extra = len(media) - 1
+        extra_html = f'<span class="media-more">+{extra}</span>' if extra else ""
+
+        if thumb:
+            kind = " video-preview" if mtype in {"video", "animated_gif"} else ""
+            play = (
+                '<span class="media-play" aria-hidden="true">▶</span>'
+                if kind
+                else ""
+            )
+            return (
+                f'<span class="tweet-preview-media{kind}">'
+                f'<img src="{_e(thumb)}" alt="原推文媒体预览" loading="lazy">'
+                f"{play}{extra_html}</span>"
+            )
+        if mtype in {"video", "animated_gif"}:
+            return (
+                '<span class="tweet-preview-media media-placeholder">'
+                '<span class="media-play" aria-hidden="true">▶</span>'
+                f'<span class="media-placeholder-label">视频</span>{extra_html}</span>'
+            )
+        return ""
+
+    def _tweet_card(self, item: ContentItem, resolver, autoplay_gif: bool = True) -> str:
         meta = item.metadata
         if meta.get("thread_parts"):
-            return self._thread_card(item, resolver)
+            return self._thread_card(item, resolver, autoplay_gif)
         if meta.get("is_retweet"):
             return self._repost_card(
                 item,
@@ -337,9 +502,10 @@ class SiteRenderer:
                 author=meta.get("rt_original_author") or "unknown",
                 text=meta.get("rt_original_text") or _tweet_body(item),
                 include_nested=True,
+                autoplay_gif=autoplay_gif,
             )
         if meta.get("is_quote") and meta.get("qrt_comment"):
-            return self._qrt_card(item, resolver)
+            return self._qrt_card(item, resolver, autoplay_gif)
         if meta.get("is_quote") and meta.get("quoted_text"):
             return self._repost_card(
                 item,
@@ -347,37 +513,58 @@ class SiteRenderer:
                 author=meta.get("quoted_author") or "unknown",
                 text=str(meta.get("quoted_text")),
                 include_nested=False,
+                autoplay_gif=autoplay_gif,
             )
-        return self._plain_card(item, resolver)
+        return self._plain_card(item, resolver, autoplay_gif)
 
-    def _attachments(self, item: ContentItem, resolver, with_media: bool = True) -> str:
+    def _attachments(
+        self,
+        item: ContentItem,
+        resolver,
+        with_media: bool = True,
+        autoplay_gif: bool = True,
+    ) -> str:
         meta = item.metadata
         parts = []
         if with_media:
-            parts.append(self._media_html(meta.get("media") or [], resolver))
+            parts.append(
+                self._media_html(
+                    meta.get("media") or [], resolver, autoplay_gif=autoplay_gif
+                )
+            )
         if meta.get("article"):
             parts.append(self._article_card(item, resolver))
         elif meta.get("card"):
             parts.append(self._link_card(meta, resolver))
         return "".join(p for p in parts if p)
 
-    def _plain_card(self, item: ContentItem, resolver) -> str:
+    def _plain_card(self, item: ContentItem, resolver, autoplay_gif: bool) -> str:
         text = _strip_article_link(_tweet_body(item), item.metadata)
         return (
             '<div class="tweet">'
             f'<p class="t-author"><b>@{_e(item.author or "unknown")}</b></p>'
             f'<p class="t-text">{_rich_text(text)}</p>'
-            f"{self._attachments(item, resolver)}"
+            f"{self._attachments(item, resolver, autoplay_gif=autoplay_gif)}"
             "</div>"
         )
 
     def _repost_card(
-        self, item: ContentItem, resolver, author: str, text: str, include_nested: bool
+        self,
+        item: ContentItem,
+        resolver,
+        author: str,
+        text: str,
+        include_nested: bool,
+        autoplay_gif: bool,
     ) -> str:
         meta = item.metadata
         nested = ""
         if include_nested and meta.get("quoted_text"):
-            nested_media = self._media_html(meta.get("quoted_media") or [], resolver)
+            nested_media = self._media_html(
+                meta.get("quoted_media") or [],
+                resolver,
+                autoplay_gif=autoplay_gif,
+            )
             nested = (
                 '<div class="tweet">'
                 f'<p class="t-author"><b>@{_e(meta.get("quoted_author") or "unknown")}</b></p>'
@@ -390,21 +577,23 @@ class SiteRenderer:
             '<div class="tweet">'
             f'<p class="t-author"><b>@{_e(author)}</b></p>'
             f'<p class="t-text">{_rich_text(_strip_article_link(text, meta))}</p>'
-            f"{self._media_html(meta.get('media') or [], resolver)}"
+            f"{self._media_html(meta.get('media') or [], resolver, autoplay_gif=autoplay_gif)}"
             f"{nested}"
-            f"{self._attachments(item, resolver, with_media=False)}"
+            f"{self._attachments(item, resolver, with_media=False, autoplay_gif=autoplay_gif)}"
             "</div></div>"
         )
 
-    def _qrt_card(self, item: ContentItem, resolver) -> str:
+    def _qrt_card(self, item: ContentItem, resolver, autoplay_gif: bool) -> str:
         meta = item.metadata
-        quoted_media = self._media_html(meta.get("quoted_media") or [], resolver)
+        quoted_media = self._media_html(
+            meta.get("quoted_media") or [], resolver, autoplay_gif=autoplay_gif
+        )
         comment = _strip_article_link(str(meta.get("qrt_comment")), meta)
         return (
             '<div class="tweet">'
             f'<p class="t-author"><b>@{_e(item.author or "unknown")}</b></p>'
             f'<p class="t-text">{_rich_text(comment)}</p>'
-            f"{self._attachments(item, resolver)}"
+            f"{self._attachments(item, resolver, autoplay_gif=autoplay_gif)}"
             '<div class="tweet">'
             f'<p class="t-author"><b>@{_e(meta.get("quoted_author") or "unknown")}</b></p>'
             f'<p class="t-text">{_rich_text(str(meta.get("quoted_text")))}</p>'
@@ -412,28 +601,50 @@ class SiteRenderer:
             "</div>"
         )
 
-    def _thread_card(self, item: ContentItem, resolver) -> str:
-        parts = item.metadata.get("thread_parts") or []
+    def _thread_card(self, item: ContentItem, resolver, autoplay_gif: bool) -> str:
+        meta = item.metadata
+        parts = meta.get("thread_parts") or []
         rows = []
         for i, part in enumerate(parts):
             last = " last" if i == len(parts) - 1 else ""
-            media = self._media_html(part.get("media") or [], resolver)
+            media = self._media_html(
+                part.get("media") or [], resolver, autoplay_gif=autoplay_gif
+            )
+            quoted = ""
+            if i == 0 and meta.get("quoted_text"):
+                quoted_media = self._media_html(
+                    meta.get("quoted_media") or [],
+                    resolver,
+                    autoplay_gif=autoplay_gif,
+                )
+                quoted = (
+                    '<div class="tweet">'
+                    f'<p class="t-author"><b>@{_e(meta.get("quoted_author") or "unknown")}</b></p>'
+                    f'<p class="t-text">{_rich_text(str(meta.get("quoted_text")))}</p>'
+                    f"{quoted_media}</div>"
+                )
             rows.append(
                 f'<div class="tick{last}"></div>'
-                f'<div class="seg"><p class="t-text">{_rich_text(part.get("text", ""))}</p>{media}</div>'
+                f'<div class="seg"><p class="t-text">{_rich_text(part.get("text", ""))}</p>'
+                f"{media}{quoted}</div>"
             )
         return (
             '<div class="tweet">'
             f'<p class="t-author"><b>@{_e(item.author or "unknown")}</b>'
             f'<span class="h">串推 {len(parts)} 条</span></p>'
             f'<div class="thread">{"".join(rows)}</div>'
-            f"{self._attachments(item, resolver, with_media=False)}"
+            f"{self._attachments(item, resolver, with_media=False, autoplay_gif=autoplay_gif)}"
             "</div>"
         )
 
     # ---------- media & cards ----------
 
-    def _media_html(self, media_list: list, resolver) -> str:
+    def _media_html(
+        self,
+        media_list: list,
+        resolver,
+        autoplay_gif: bool = True,
+    ) -> str:
         cells = []
         for m in media_list or []:
             mtype = m.get("type")
@@ -441,7 +652,7 @@ class SiteRenderer:
             mp4 = m.get("mp4_url") or ""
             if mtype == "photo" and thumb:
                 cells.append(f'<img src="{_e(thumb)}" alt="" loading="lazy">')
-            elif mtype == "animated_gif" and mp4:
+            elif mtype == "animated_gif" and mp4 and autoplay_gif:
                 src = resolver(mp4)
                 cells.append(
                     f'<div class="gifwrap"><video autoplay loop muted playsinline src="{_e(src)}"></video>'

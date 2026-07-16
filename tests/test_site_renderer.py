@@ -127,6 +127,11 @@ def _render(tmp_path, items=None):
     return renderer.render(items or _six_shapes(), "2026-07-05", 18)
 
 
+def _digest_item_html(digest: str, tweet_id: str) -> str:
+    """Return one rendered digest item without depending on an HTML parser."""
+    return digest.split(f'id="t-{tweet_id}"', 1)[1].split("</article>", 1)[0]
+
+
 def test_digest_page_structure(tmp_path):
     paths = _render(tmp_path)
     digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
@@ -169,6 +174,148 @@ def test_thread_and_gif_cards(tmp_path):
     # GIF: local mp4, autoplay loop, badge
     assert '<video autoplay loop muted playsinline src="../assets/2026-07-05/gg.mp4">' in digest
     assert '<span class="tag">GIF</span>' in digest
+
+
+def test_short_plain_tweet_stays_open_and_long_plain_tweet_folds(tmp_path):
+    short = _item("20", _content="一条简短推文")
+    long = _item("21", _content="长" * 241)
+
+    _render(tmp_path, [short, long])
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
+
+    assert 'class="tweet-fold"' not in _digest_item_html(digest, "20")
+    long_html = _digest_item_html(digest, "21")
+    assert '<details class="tweet-fold">' in long_html
+    assert '<span class="when-closed">展开原推文</span>' in long_html
+    assert '<span class="when-open">收起原推文</span>' in long_html
+    assert '<details class="tweet-fold" open>' not in long_html
+
+
+def test_four_explicit_newlines_trigger_fold(tmp_path):
+    item = _item("22", _content="第一行\n第二行\n第三行\n第四行\n第五行")
+
+    _render(tmp_path, [item])
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
+
+    assert '<details class="tweet-fold">' in _digest_item_html(digest, "22")
+
+
+def test_thread_fold_preserves_media_priority_counts_and_full_order(tmp_path):
+    item = _item(
+        "23",
+        thread_parts=[
+            {
+                "tweet_id": "23",
+                "text": "线程第一段",
+                "media": [
+                    {"type": "photo", "thumbnail_url": "https://p/root.jpg"}
+                ],
+                "links": [],
+            },
+            {
+                "tweet_id": "24",
+                "text": "线程第二段",
+                "media": [
+                    {
+                        "type": "video",
+                        "thumbnail_url": "https://p/later.jpg",
+                        "mp4_url": "https://v/later.mp4",
+                    }
+                ],
+                "links": [],
+            },
+        ],
+        quoted_author="quoted",
+        quoted_text="线程头部引用内容",
+        quoted_media=[
+            {
+                "type": "video",
+                "thumbnail_url": "https://p/quote.jpg",
+                "mp4_url": "https://v/quote.mp4",
+            }
+        ],
+        asset_map={"https://p/root.jpg": "assets/2026-07-05/root.jpg"},
+    )
+
+    _render(tmp_path, [item])
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
+    item_html = _digest_item_html(digest, "23")
+
+    preview = item_html.split('class="tweet-fold-body"', 1)[0]
+    assert 'src="../assets/2026-07-05/root.jpg"' in preview
+    assert 'src="https://p/quote.jpg"' not in preview
+    assert '<span class="media-more">+2</span>' in preview
+    assert "2 段 · 1 张图片 · 2 个视频" in preview
+
+    full = item_html.split('class="tweet-fold-body"', 1)[1]
+    assert full.index("线程第一段") < full.index("../assets/2026-07-05/root.jpg")
+    assert full.index("../assets/2026-07-05/root.jpg") < full.index("https://p/quote.jpg")
+    assert full.index("https://p/quote.jpg") < full.index("线程第二段")
+    assert full.index("线程第二段") < full.index("https://p/later.jpg")
+
+
+def test_quote_video_uses_static_preview_and_non_autoplay_full_player(tmp_path):
+    item = _item(
+        "25",
+        is_quote=True,
+        qrt_comment="推荐这个演示",
+        quoted_author="demo",
+        quoted_text="引用视频正文",
+        quoted_media=[
+            {
+                "type": "animated_gif",
+                "thumbnail_url": "https://p/demo.jpg",
+                "mp4_url": "https://v/demo.mp4",
+            }
+        ],
+        asset_map={"https://p/demo.jpg": "assets/2026-07-05/demo.jpg"},
+    )
+
+    _render(tmp_path, [item])
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
+    item_html = _digest_item_html(digest, "25")
+    preview, full = item_html.split('class="tweet-fold-body"', 1)
+
+    assert '<img src="../assets/2026-07-05/demo.jpg"' in preview
+    assert '<span class="media-play" aria-hidden="true">▶</span>' in preview
+    assert "1 个视频" in preview
+    assert "<video" not in preview
+    assert '<video controls preload="metadata" poster="../assets/2026-07-05/demo.jpg">' in full
+    assert " autoplay" not in full
+
+
+def test_video_without_thumbnail_has_preview_placeholder(tmp_path):
+    item = _item(
+        "26",
+        is_quote=True,
+        qrt_comment="只有视频地址",
+        quoted_author="demo",
+        quoted_text="无封面视频",
+        quoted_media=[{"type": "video", "mp4_url": "https://v/no-poster.mp4"}],
+    )
+
+    _render(tmp_path, [item])
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
+    item_html = _digest_item_html(digest, "26")
+
+    assert 'class="tweet-preview-media media-placeholder"' in item_html
+    assert '<span class="media-placeholder-label">视频</span>' in item_html
+
+
+def test_fold_preview_escapes_text_without_interactive_links(tmp_path):
+    item = _item(
+        "27",
+        _content=("<script>bad()</script> https://example.com " + "长" * 241),
+    )
+
+    _render(tmp_path, [item])
+    digest = (tmp_path / "daily" / "2026-07-05.html").read_text(encoding="utf-8")
+    item_html = _digest_item_html(digest, "27")
+    preview = item_html.split('class="tweet-fold-body"', 1)[0]
+
+    assert "<script>bad()</script>" not in preview
+    assert "&lt;script&gt;bad()&lt;/script&gt;" in preview
+    assert '<a href="https://example.com">' not in preview
 
 
 def test_folds_and_meta(tmp_path):
