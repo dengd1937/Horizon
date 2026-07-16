@@ -33,6 +33,7 @@ from .render.curated import (
     format_new_articles_section,
     load_articles,
     localize_article_media,
+    place_new_articles_after_overview,
     select_new_articles,
 )
 from .render.deploy import deploy_site
@@ -270,8 +271,11 @@ class HorizonOrchestrator:
                             site_base_url=email_base_url,
                         )
                         email_articles = self._new_email_articles(lang, today)
-                        email_summary += format_new_articles_section(
+                        email_article_section = format_new_articles_section(
                             email_articles, base_url=email_base_url
+                        )
+                        email_summary = place_new_articles_after_overview(
+                            email_summary, email_article_section
                         )
                         email_article_slugs = [article.slug for article in email_articles]
                     self._deliver_email_summary(

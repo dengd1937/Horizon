@@ -59,7 +59,11 @@
         "AnthropicAI",
         "OpenAI",
         "Alibaba_Qwen",
-        "deepseek_ai"
+        "deepseek_ai",
+        "Pluvio9yte",
+        "GitHub_Daily",
+        "thsottiaux",
+        "trq212"
       ],
       "fetch_limit": 20,
       "fetch_reply_text": true,

@@ -112,6 +112,31 @@ def format_new_articles_section(
     return "\n".join(lines)
 
 
+def place_new_articles_after_overview(summary: str, section: str) -> str:
+    """Put the optional curated-articles block before the daily item list.
+
+    Daily summaries open with an H1 and a short overview, followed by a
+    horizontal divider before their item list.  Keeping curated articles before
+    that first divider makes them prominent in email without changing the
+    ordering of the rendered site or stored daily summary.  The fallbacks keep
+    the block near the top if a custom summary omits the expected divider.
+    """
+    if not section:
+        return summary
+
+    before_divider, divider, after_divider = summary.partition("\n---\n")
+    if divider:
+        return (
+            f"{before_divider.rstrip()}{section}\n\n---\n"
+            f"{after_divider.lstrip()}"
+        )
+
+    heading, newline, remaining = summary.partition("\n")
+    if heading.startswith("# ") and newline:
+        return f"{heading.rstrip()}{section}\n\n{remaining.lstrip()}"
+    return f"{section.lstrip()}\n\n{summary.lstrip()}"
+
+
 def new_articles_section(
     articles: list[CuratedArticle],
     *,

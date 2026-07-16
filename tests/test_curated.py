@@ -14,6 +14,7 @@ from src.render.curated import (
     article_media_urls,
     count_recent,
     detail_page_html,
+    place_new_articles_after_overview,
     load_article,
     load_articles,
     localize_article_media,
@@ -306,6 +307,24 @@ def test_new_articles_section_empty_when_none():
         articles, base_url="https://h.example", since="2026-07-09", today="2026-07-09"
     )
     assert section == ""
+
+
+def test_new_articles_section_is_placed_after_overview_before_daily_items():
+    summary = "# Daily\n\n> 今日概览\n\n---\n\n1. 今日动态"
+    section = "\n\n## 本期新增精选文章\n\n- **测试文章**"
+
+    result = place_new_articles_after_overview(summary, section)
+
+    assert result.index("# Daily") < result.index("今日概览")
+    assert result.index("今日概览") < result.index("本期新增精选文章")
+    assert result.index("本期新增精选文章") < result.index("---")
+    assert result.index("---") < result.index("1. 今日动态")
+
+
+def test_placing_an_empty_new_articles_section_leaves_summary_unchanged():
+    summary = "# Daily\n\n> 今日概览\n\n---\n\n1. 今日动态"
+
+    assert place_new_articles_after_overview(summary, "") == summary
 
 
 def test_new_articles_section_keeps_same_day_additions_without_resending_slugs():

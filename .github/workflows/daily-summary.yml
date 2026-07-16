@@ -72,7 +72,7 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
           COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
-        run: uv run horizon --hours 48
+        run: uv run horizon --hours 24
 
       - name: Persist email delivery state
         if: always()
