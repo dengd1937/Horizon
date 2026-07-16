@@ -15,7 +15,7 @@ published_date: 2026-07-01
 added_date: 2026-07-08
 slug: example-com-20260701-short-title
 summary: 一行摘要，用于索引页与邮件本期新增。
-tags: [AI, 编译器]
+tags: [智能体, 工具设计]
 cover: https://images.example.com/example-cover.jpg
 intro: |
   可选导读，可多行；渲染在原文链与正文之间。
@@ -37,7 +37,7 @@ intro: |
 | `added_date` | string | 是 | 入库时的 UTC 日期，必须精确匹配零补齐的 `YYYY-MM-DD`，用于按月分组与邮件「本期新增」 |
 | `slug` | string | 是 | 文件名与 URL slug，全库唯一 |
 | `summary` | string | 是 | 一行摘要 |
-| `tags` | string[] | 否 | 标签列表 |
+| `tags` | string[] | 否 | 2–4 个受控标签，见 `data/article-tags.yaml` |
 | `cover` | string | 否 | 原始封面图绝对 `https` URL |
 | `intro` | string | 否 | 导读，可多行 |
 
@@ -50,6 +50,15 @@ intro: |
 - 已发布的 slug 不因后续标题编辑改变，也不允许 helper 静默覆盖同名文件。
 
 例：`overreacted-io-20260708-the-grug-developer`。
+
+## 标签词表
+
+`data/article-tags.yaml` 是文章库标签的唯一词表。每篇文章选择 2–4 个 `tags[].name`，并按词表中从宽泛到具体的顺序书写。
+
+- 通用概念使用简体中文，技术专名保留官方写法，例如 `MCP`、`Agent Skills` 和 `LangGraph`。
+- 发布方、作者和来源域名不作为标签；这些信息已由 `source_domain` 表达。
+- `legacy_aliases` 仅用于迁移与审核，新文章不得写入别名。`discarded_legacy_tags` 不得继续使用。
+- 新文章确实需要词表外的概念时，先扩充词表及其测试，再入库文章；不为近义词临时新建标签。
 
 ## 入库确定性规则
 

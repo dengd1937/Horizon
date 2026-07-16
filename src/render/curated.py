@@ -7,7 +7,9 @@ reprint notice, optional intro, full body, and prev/next navigation.
 """
 
 import html
+import json
 import re
+from collections import Counter
 from datetime import date as date_cls, timedelta
 from pathlib import Path
 from typing import Collection, Optional
@@ -24,6 +26,7 @@ from ..articles.contract import (
     slugify,
 )
 from .assets import MediaDownloader
+from .article_index_js import ARTICLE_INDEX_JS
 from .html_sanitizer import sanitize_html_fragment
 from .site_css import SITE_CSS
 
@@ -188,16 +191,21 @@ def _render_markdown(md: str, asset_map: Optional[dict[str, str]] = None) -> str
     return sanitize_html_fragment(rendered)
 
 
-def _page(title: str, body: str) -> str:
+def _page(title: str, body: str, *, script_src: Optional[str] = None) -> str:
+    script_policy = "'self'" if script_src else "'none'"
+    script = (
+        f'\n<script defer src="{_e(script_src)}"></script>' if script_src else ""
+    )
     return (
         "<!DOCTYPE html>\n"
         '<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         '<meta http-equiv="Content-Security-Policy" '
         'content="default-src \'none\'; img-src \'self\' https: data:; '
-        'media-src \'self\' https:; style-src \'unsafe-inline\'">\n'
+        'media-src \'self\' https:; style-src \'unsafe-inline\'; '
+        f'script-src {script_policy}; base-uri \'none\'; form-action \'none\'">\n'
         '<link rel="icon" href="data:,">\n'
-        f"<title>{_e(title)}</title>\n<style>{SITE_CSS}</style>\n</head>\n"
+        f"<title>{_e(title)}</title>\n<style>{SITE_CSS}</style>{script}\n</head>\n"
         f'<body>\n<div class="wrap">\n{body}\n</div>\n</body>\n</html>\n'
     )
 
@@ -288,16 +296,31 @@ def index_page_html(articles: list[CuratedArticle]) -> str:
     for a in articles:
         by_month.setdefault(_month_key(a.added_date), []).append(a)
 
+    tag_counts: Counter[str] = Counter()
+    for article in articles:
+        tag_counts.update(list(dict.fromkeys(article.tags)))
+    filter_tags = sorted(
+        (
+            (tag, count)
+            for tag, count in tag_counts.items()
+            if 0 < count < len(articles)
+        ),
+        key=lambda item: (-item[1], item[0].casefold(), item[0]),
+    )
+
     sections = []
     for month in sorted(by_month, reverse=True):
         year, mon = month.split("-")
         rows = []
         for a in by_month[month]:
+            tags = list(dict.fromkeys(a.tags))
+            tags_json = json.dumps(tags, ensure_ascii=False, separators=(",", ":"))
             meta_line = a.source_domain
-            if a.tags:
-                meta_line += " · " + " ".join(f"#{t}" for t in a.tags)
+            if tags:
+                meta_line += " · " + " ".join(f"#{t}" for t in tags)
             rows.append(
-                f'<a class="art-entry" href="{_e(a.slug)}.html">'
+                f'<a class="art-entry" data-article-entry '
+                f'data-tags="{_e(tags_json)}" href="{_e(a.slug)}.html">'
                 f'<span class="day-tag">{_zh_day(a.added_date)}</span>'
                 f'<span class="ttl">{_e(a.title)}</span>'
                 f'<span class="meta">{_e(meta_line)}</span>'
@@ -305,17 +328,67 @@ def index_page_html(articles: list[CuratedArticle]) -> str:
                 "</a>"
             )
         sections.append(
-            f'<h2 class="idx-month">{year} 年 {int(mon)} 月</h2>' + "".join(rows)
+            '<section class="idx-group" data-article-group>'
+            f'<h2 class="idx-month">{year} 年 {int(mon)} 月</h2>'
+            + "".join(rows)
+            + "</section>"
         )
 
+    controls = ""
+    filtered_empty = ""
+    script_src = None
+    if articles:
+        tag_buttons = [
+            '<button class="idx-tag" type="button" data-article-tag data-tag="" '
+            f'aria-pressed="true">全部 <span>{len(articles)}</span></button>'
+        ]
+        tag_buttons.extend(
+            '<button class="idx-tag" type="button" data-article-tag '
+            f'data-tag="{_e(tag)}" aria-pressed="false">'
+            f'{_e(tag)} <span>{count}</span></button>'
+            for tag, count in filter_tags
+        )
+        controls = (
+            '<section class="idx-tools" data-article-filter hidden aria-label="文章筛选">'
+            '<div class="idx-search-row">'
+            '<label class="visually-hidden" for="article-search">搜索文章</label>'
+            '<input class="idx-search" id="article-search" type="search" '
+            'data-article-search autocomplete="off" spellcheck="false" '
+            'aria-controls="article-groups" '
+            'placeholder="搜索标题、摘要、来源或标签……">'
+            '<button class="idx-reset" type="button" data-article-reset hidden>重置</button>'
+            '</div>'
+            '<div class="idx-tags" role="group" aria-label="按标签筛选">'
+            + "".join(tag_buttons)
+            + "</div>"
+            f'<p class="idx-results" data-article-results aria-live="polite" '
+            f'aria-atomic="true">共 {len(articles)} 篇文章</p>'
+            "</section>"
+        )
+        filtered_empty = (
+            '<p class="idx-empty" data-article-empty hidden>'
+            "没有找到符合条件的文章。</p>"
+        )
+        script_src = "article-index.js"
+
     body = (
+        '<main data-article-library>'
         '<div class="art-top"><span class="brand">HORIZON</span>'
         '<a href="../index.html">最新 ↗</a></div>'
         "<h1 class=\"idx-title\">文章库</h1>"
         '<p class="idx-sub">人工精选 · 转载长文</p>'
-        + ("".join(sections) if sections else '<p class="empty">暂无文章。</p>')
+        + controls
+        + (
+            '<div class="idx-groups" id="article-groups" data-article-groups>'
+            + "".join(sections)
+            + "</div>"
+            if sections
+            else '<p class="empty">暂无文章。</p>'
+        )
+        + filtered_empty
+        + "</main>"
     )
-    return _page("Horizon · 文章库", body)
+    return _page("Horizon · 文章库", body, script_src=script_src)
 
 
 # ---------- top-level render ----------
@@ -325,6 +398,8 @@ def render_curated(out_dir: Path, articles: list[CuratedArticle]) -> list[Path]:
     arts_dir = out_dir / "articles"
     arts_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
+
+    (arts_dir / "article-index.js").write_text(ARTICLE_INDEX_JS, encoding="utf-8")
 
     index_path = arts_dir / "index.html"
     index_path.write_text(index_page_html(articles), encoding="utf-8")

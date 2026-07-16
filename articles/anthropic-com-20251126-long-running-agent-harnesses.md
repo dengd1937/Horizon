@@ -7,10 +7,10 @@ added_date: '2026-07-16'
 slug: anthropic-com-20251126-long-running-agent-harnesses
 summary: Anthropic 提出初始化智能体与增量编码智能体组成的 harness，通过功能清单、进度工件、git 历史和端到端测试，让智能体可跨多个上下文窗口持续推进复杂软件任务。
 tags:
-- AI agents
-- agent harness
-- software engineering
-- Anthropic
+- 智能体
+- Agent Harness
+- 长时运行
+- 工程实践
 cover: https://cdn.sanity.io/images/4zrzovbb/website/32ea71b3e8e87a990f6df4c4def2b9e52815e977-2400x1260.png
 ---
 

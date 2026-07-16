@@ -7,10 +7,8 @@ added_date: '2026-07-16'
 slug: anthropic-com-20250929-context-engineering-agents
 summary: Anthropic 阐释上下文工程：把上下文视为有限注意力资源，并通过恰当的系统提示、工具、按需检索、压缩、结构化记忆与子智能体架构，构建更可靠的长程智能体。
 tags:
-- AI agents
-- context engineering
-- LLM
-- Anthropic
+- 智能体
+- 上下文工程
 cover: https://cdn.sanity.io/images/4zrzovbb/website/ea2bf01aa874d7ab776453e97dfeed5d2bf5a116-2400x1260.png
 ---
 

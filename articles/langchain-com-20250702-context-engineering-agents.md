@@ -7,10 +7,9 @@ added_date: '2026-07-16'
 slug: langchain-com-20250702-context-engineering-agents
 summary: LangChain 总结面向智能体的上下文工程四种策略：写入、选择、压缩与隔离上下文，并说明如何用 LangGraph 与 LangSmith 实现、评估和迭代这些策略。
 tags:
-- AI agents
-- context engineering
+- 智能体
+- 上下文工程
 - LangGraph
-- LangChain
 cover: https://cdn.prod.website-files.com/65c81e88c254bb0f97633a71/69cbaaa5d3aab32815f8592a_Context-Engineering.png
 ---
 

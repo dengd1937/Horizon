@@ -1,11 +1,14 @@
 """Tests for curated article parsing and rendering."""
 
 import asyncio
+import json
 from dataclasses import replace
 from pathlib import Path
 
 import httpx
 import pytest
+import yaml
+from bs4 import BeautifulSoup
 
 from src.models import SiteConfig
 from src.render.assets import MediaDownloader
@@ -14,6 +17,7 @@ from src.render.curated import (
     article_media_urls,
     count_recent,
     detail_page_html,
+    index_page_html,
     place_new_articles_after_overview,
     load_article,
     load_articles,
@@ -26,6 +30,7 @@ from src.render.site import SiteRenderer
 
 FIXTURES = Path(__file__).parent / "fixtures" / "articles"
 INVALID = Path(__file__).parent / "fixtures" / "articles-invalid"
+PROJECT_ROOT = Path(__file__).parents[1]
 
 
 def _downloader(tmp_path, handler, max_mb: int = 50) -> MediaDownloader:
@@ -46,6 +51,26 @@ def test_load_articles_sorts_by_added_date_desc():
         "martinfowler-com-20260615-refactoring",
         "paulgraham-com-20260520-do-things",
     ]
+
+
+def test_published_articles_use_controlled_tag_vocabulary():
+    taxonomy = yaml.safe_load(
+        (PROJECT_ROOT / "data" / "article-tags.yaml").read_text(encoding="utf-8")
+    )
+    names = [entry["name"] for entry in taxonomy["tags"]]
+    rules = taxonomy["rules"]
+    order = {name: index for index, name in enumerate(names)}
+
+    assert taxonomy["version"] == 1
+    assert len(names) == len(set(names))
+    assert set(taxonomy["legacy_aliases"].values()) <= set(names)
+
+    for article in load_articles(PROJECT_ROOT / "articles"):
+        assert rules["minimum_per_article"] <= len(article.tags)
+        assert len(article.tags) <= rules["maximum_per_article"]
+        assert len(article.tags) == len(set(article.tags))
+        assert set(article.tags) <= set(names)
+        assert article.tags == sorted(article.tags, key=order.__getitem__)
 
 
 def test_load_article_parses_all_fields():
@@ -236,6 +261,75 @@ def test_detail_page_sanitizes_active_html_and_unsafe_links():
     assert '<video controls="" src="https://media.example/demo.mp4"></video>' in html_
     assert "https://127.0.0.1/internal" not in html_
     assert "Content-Security-Policy" in html_
+    assert "script-src 'none'" in html_
+
+
+def test_index_page_renders_progressive_filter_controls_and_safe_data():
+    articles = load_articles(FIXTURES)
+    html_ = index_page_html(articles)
+    soup = BeautifulSoup(html_, "html.parser")
+
+    root = soup.select_one("[data-article-library]")
+    controls = soup.select_one("[data-article-filter]")
+    assert root is not None
+    assert controls is not None and controls.has_attr("hidden")
+    assert soup.select_one('input[type="search"][data-article-search]') is not None
+    assert soup.select_one("[data-article-reset]").has_attr("hidden")
+    assert soup.select_one("[data-article-results]").get_text(strip=True) == "共 3 篇文章"
+
+    buttons = soup.select("[data-article-tag]")
+    assert buttons[0]["data-tag"] == ""
+    assert buttons[0]["aria-pressed"] == "true"
+    assert buttons[0].get_text(" ", strip=True) == "全部 3"
+    assert [button["data-tag"] for button in buttons[1:]] == sorted(
+        {tag for article in articles for tag in article.tags}, key=str.casefold
+    )
+
+    entries = soup.select("[data-article-entry]")
+    assert len(entries) == len(articles)
+    for entry, article in zip(entries, articles):
+        assert json.loads(entry["data-tags"]) == article.tags
+    assert len(soup.select("[data-article-group]")) == 3
+
+    script = soup.select_one('script[src="article-index.js"]')
+    assert script is not None and script.has_attr("defer")
+    csp = soup.select_one('meta[http-equiv="Content-Security-Policy"]')["content"]
+    assert "script-src 'self'" in csp
+    assert "'unsafe-inline'" not in csp.split("script-src", 1)[1]
+
+
+def test_index_filter_tags_hide_universal_count_once_and_sort_deterministically():
+    base = load_articles(FIXTURES)[0]
+    articles = [
+        replace(base, slug="one", tags=["共同", "Beta", "Alpha", "Beta"]),
+        replace(base, slug="two", tags=["共同", "Beta", "Gamma"]),
+        replace(base, slug="three", tags=["共同", "Alpha", "Gamma"]),
+    ]
+    soup = BeautifulSoup(index_page_html(articles), "html.parser")
+    buttons = soup.select("[data-article-tag]")
+
+    assert [button["data-tag"] for button in buttons] == [
+        "",
+        "Alpha",
+        "Beta",
+        "Gamma",
+    ]
+    assert all(
+        button.select_one("span").get_text(strip=True) == "2"
+        for button in buttons[1:]
+    )
+    assert not soup.select('[data-article-tag][data-tag="共同"]')
+
+
+def test_index_data_tags_escape_attribute_special_characters():
+    base = load_articles(FIXTURES)[0]
+    tag = 'R&D "tools" <safe>'
+    html_ = index_page_html([replace(base, tags=[tag])])
+    soup = BeautifulSoup(html_, "html.parser")
+
+    assert json.loads(soup.select_one("[data-article-entry]")["data-tags"]) == [tag]
+    assert 'data-tags="[&quot;R&amp;D \\&quot;tools\\&quot; &lt;safe&gt;&quot;]"' in html_
+    assert soup.find("safe") is None
 
 
 def test_render_curated_produces_index_and_details(tmp_path):
@@ -243,6 +337,10 @@ def test_render_curated_produces_index_and_details(tmp_path):
     paths = render_curated(tmp_path, articles)
     arts = tmp_path / "articles"
     assert (arts / "index.html") in paths
+    script = arts / "article-index.js"
+    assert script.is_file()
+    assert "data-article-entry" in script.read_text(encoding="utf-8")
+    assert script not in paths
     for a in articles:
         assert (arts / f"{a.slug}.html") in paths
     idx = (arts / "index.html").read_text(encoding="utf-8")
@@ -256,6 +354,9 @@ def test_render_curated_empty_state(tmp_path):
     paths = render_curated(tmp_path, [])
     idx = (tmp_path / "articles" / "index.html").read_text(encoding="utf-8")
     assert "暂无文章" in idx
+    assert "data-article-filter" not in idx
+    assert '<script defer src="article-index.js"></script>' not in idx
+    assert "script-src 'none'" in idx
     assert paths == [tmp_path / "articles" / "index.html"]
 
 

@@ -7,10 +7,8 @@ added_date: '2026-07-16'
 slug: anthropic-com-20260109-demystifying-agent-evals
 summary: Anthropic 系统介绍智能体评估：从任务、评分器、能力与回归评估，到真实环境、数据污染、可观测性和持续迭代，帮助团队将评估变为可靠智能体的工程基础设施。
 tags:
-- AI agents
-- evaluations
-- LLM
-- Anthropic
+- 智能体
+- 评估
 cover: https://cdn.sanity.io/images/4zrzovbb/website/412be842c5c6bae6b4bcd515c191b0aa5015e05f-2400x1260.png
 ---
 

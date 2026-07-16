@@ -7,11 +7,10 @@ added_date: '2026-07-16'
 slug: anthropic-com-20250613-multi-agent-research-system
 summary: Anthropic 分享其 Research 多智能体系统从原型到生产的架构、提示词、评估和可靠性经验，说明如何通过并行子智能体扩展开放式研究能力。
 tags:
-- AI agents
-- multi-agent systems
-- research
-- evaluations
-- Anthropic
+- 智能体
+- 多智能体
+- 评估
+- 工程实践
 cover: https://cdn.sanity.io/images/4zrzovbb/website/5cf046fff69b847bfa78c12723dd466b285c0218-2400x1260.png
 ---
 

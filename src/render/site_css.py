@@ -35,7 +35,7 @@ body {
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
-a:focus-visible, summary:focus-visible {
+a:focus-visible, summary:focus-visible, button:focus-visible, input:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px;
 }
 .wrap { max-width: 720px; margin: 0 auto; padding: 0 20px 80px; }
@@ -291,6 +291,41 @@ details.tweet-fold[open] > summary { border: 0; color: inherit; }
 
 .idx-title { font-family: var(--serif); font-size: 40px; margin: 16px 0 6px; }
 .idx-sub { font-family: var(--mono); font-size: 12.5px; color: var(--sub); margin: 0 0 40px; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.idx-tools { margin: 0 0 34px; }
+.idx-search-row { display: flex; align-items: stretch; gap: 10px; }
+.idx-search {
+  min-width: 0; flex: 1; appearance: none; border: 1px solid var(--card-line);
+  border-radius: 9px; background: var(--card); color: var(--ink);
+  font: 14px/1.5 var(--sans); padding: 10px 13px;
+}
+.idx-search::placeholder { color: var(--sub); opacity: .85; }
+.idx-reset, .idx-tag {
+  appearance: none; border: 1px solid var(--card-line); background: var(--card);
+  color: var(--sub); font-family: var(--mono); cursor: pointer;
+}
+.idx-reset {
+  border-radius: 9px; padding: 0 14px; font-size: 12px; flex-shrink: 0;
+}
+.idx-reset:hover, .idx-tag:hover { border-color: var(--accent); color: var(--accent); }
+.idx-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+.idx-tag {
+  border-radius: 999px; padding: 5px 10px; font-size: 11.5px; line-height: 1.35;
+}
+.idx-tag span { color: var(--signal); margin-left: 3px; }
+.idx-tag[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--accent);
+}
+.idx-results {
+  font-family: var(--mono); font-size: 11.5px; color: var(--sub); margin: 13px 0 0;
+}
+.idx-empty {
+  color: var(--sub); font-family: var(--mono); font-size: 13px;
+  padding: 32px 0; margin: 0;
+}
 .idx-month { font-family: var(--mono); font-size: 12px; font-weight: 400; letter-spacing: .16em; color: var(--sub); margin: 36px 0 8px; }
 .day { display: flex; align-items: baseline; gap: 14px; padding: 12px 2px; border-bottom: 1px dashed var(--line); color: inherit; }
 .day:hover { border-bottom-color: var(--accent); text-decoration: none; }
@@ -339,6 +374,9 @@ details.tweet-fold[open] > summary { border: 0; color: inherit; }
   .art-title { font-size: 26px; }
   .prose { font-size: 16px; }
   .idx-title { font-size: 32px; }
+  .idx-search-row { align-items: stretch; }
+  .idx-search { width: 100%; }
+  .idx-reset { min-height: 42px; }
   .day .t { display: none; }
 }
 """

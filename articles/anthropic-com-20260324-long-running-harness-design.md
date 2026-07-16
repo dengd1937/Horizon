@@ -7,11 +7,10 @@ added_date: '2026-07-16'
 slug: anthropic-com-20260324-long-running-harness-design
 summary: Anthropic 提出面向长时程应用开发的规划器、生成器与评估器三智能体 harness，以上下文重置、结构化交接、独立评估和迭代反馈提升自主编码与前端设计质量。
 tags:
-- AI agents
-- agent harness
-- long-running agents
-- software engineering
-- Anthropic
+- 智能体
+- Agent Harness
+- 长时运行
+- 工程实践
 cover: https://cdn.sanity.io/images/4zrzovbb/website/84a488382e0428a5eebade574af047e5d3b610ab-2400x1260.png
 ---
 

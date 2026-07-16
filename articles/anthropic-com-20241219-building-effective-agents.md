@@ -7,9 +7,7 @@ added_date: '2026-07-15'
 slug: anthropic-com-20241219-building-effective-agents
 summary: Anthropic 总结构建可靠 AI 智能体的实践经验，介绍从增强型 LLM、工作流到自主智能体的设计模式、适用场景与工具工程原则。
 tags:
-- 人工智能
 - 智能体
-- LLM
 - 工程实践
 cover: https://cdn.sanity.io/images/4zrzovbb/website/76b5733c669f0dfb9c7aa7fc512a495867cf12e6-2400x1260.png
 ---

@@ -7,11 +7,10 @@ added_date: '2026-07-16'
 slug: anthropic-com-20250911-effective-agent-tools
 summary: Anthropic 介绍用原型、真实任务评估和智能体协作来改进工具的方法，并总结工具选择、命名空间、高信号响应、token 效率和工具描述提示词工程等原则。
 tags:
-- AI agents
+- 智能体
+- 工具设计
 - MCP
-- tool design
-- evaluations
-- Anthropic
+- 评估
 cover: https://cdn.sanity.io/images/4zrzovbb/website/91df4759f1037fb6073de772278cb71e6e4ee37d-2400x1260.png
 ---
 

@@ -1,0 +1,48 @@
+version: 1
+
+rules:
+  minimum_per_article: 2
+  maximum_per_article: 4
+  ordering: broad-to-specific
+  language: zh-CN-with-technical-proper-nouns
+
+tags:
+  - name: 智能体
+    description: 以 AI Agent 的设计、构建或应用为主题。
+  - name: 多智能体
+    description: 涉及多个智能体的分工、协作或编排。
+  - name: 上下文工程
+    description: 涉及上下文选择、组织、压缩、记忆或隔离。
+  - name: 工具设计
+    description: 涉及智能体工具的定义、接口、返回结果或评估。
+  - name: MCP
+    description: 以 Model Context Protocol 的概念、工具或实践为重要内容。
+  - name: 评估
+    description: 涉及评估任务、评分器、回归测试或可观测性。
+  - name: Agent Skills
+    description: 以 Agent Skills 规范、结构或应用为重要内容。
+  - name: Agent Harness
+    description: 涉及支撑智能体持续执行的运行框架与工程机制。
+  - name: 长时运行
+    description: 涉及跨上下文窗口、长周期或持续自主执行。
+  - name: 工程实践
+    description: 强调可复用的设计方法、开发流程或生产经验。
+  - name: LangGraph
+    description: 以 LangGraph 的实现或应用为重要内容。
+
+legacy_aliases:
+  AI agents: 智能体
+  人工智能: 智能体
+  multi-agent systems: 多智能体
+  context engineering: 上下文工程
+  tool design: 工具设计
+  evaluations: 评估
+  agent harness: Agent Harness
+  long-running agents: 长时运行
+  software engineering: 工程实践
+
+discarded_legacy_tags:
+  Anthropic: 发布方已由 source_domain 表达。
+  LangChain: 发布方已由 source_domain 表达；具体技术使用 LangGraph。
+  LLM: 对当前智能体专题文章区分度过低。
+  research: 含义过宽，不作为当前文章库的筛选维度。

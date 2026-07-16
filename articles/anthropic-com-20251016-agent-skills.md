@@ -7,9 +7,8 @@ added_date: '2026-07-16'
 slug: anthropic-com-20251016-agent-skills
 summary: Anthropic 介绍 Agent Skills：通过可组合的指令、脚本和资源，将通用智能体转化为具备领域流程知识的专门智能体。
 tags:
-- AI agents
+- 智能体
 - Agent Skills
-- Anthropic
 cover: https://cdn.sanity.io/images/4zrzovbb/website/f10f90c11a484ad8bdf11ffcd9f6e08cfd9358b8-2400x1260.png
 ---
 
