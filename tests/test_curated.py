@@ -269,6 +269,7 @@ def test_index_page_renders_progressive_filter_controls_and_safe_data():
     html_ = index_page_html(articles)
     soup = BeautifulSoup(html_, "html.parser")
 
+    assert "[hidden] { display: none !important; }" in html_
     root = soup.select_one("[data-article-library]")
     controls = soup.select_one("[data-article-filter]")
     assert root is not None
