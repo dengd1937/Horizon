@@ -1,8 +1,8 @@
 {
   "version": "1.0",
   "ai": {
-    "provider": "openai",
-    "model": "deepseek-chat",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
     "api_key_env": "DEEPSEEK_API_KEY",
     "base_url": "https://api.deepseek.com/v1",
     "temperature": 0.3,
@@ -10,6 +10,13 @@
     "throttle_sec": 0,
     "analysis_concurrency": 4,
     "enrichment_concurrency": 2,
+    "thinking": "disabled",
+    "stages": {
+      "enrichment": {
+        "model": "deepseek-v4-pro",
+        "thinking": "disabled"
+      }
+    },
     "languages": [
       "zh"
     ]

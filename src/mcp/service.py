@@ -286,7 +286,7 @@ class HorizonPipelineService:
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for scoring.")
 
-        ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
+        ai_client = ctx.runtime.create_ai_client(ctx.config.ai.for_stage("screening"))
         analyzer = ctx.runtime.ContentAnalyzer(ai_client)
         scored_items = await analyzer.analyze_batch(items)
 
@@ -402,8 +402,9 @@ class HorizonPipelineService:
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for enrichment.")
 
-        ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
-        enricher = ctx.runtime.ContentEnricher(ai_client)
+        concept_client = ctx.runtime.create_ai_client(ctx.config.ai.for_stage("screening"))
+        enrichment_client = ctx.runtime.create_ai_client(ctx.config.ai.for_stage("enrichment"))
+        enricher = ctx.runtime.ContentEnricher(concept_client, enrichment_client)
         await enricher.enrich_batch(items)
 
         self.run_store.save_items(run_id, "enriched", items_to_dicts(items))

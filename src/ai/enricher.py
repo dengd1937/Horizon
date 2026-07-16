@@ -25,10 +25,22 @@ from ..models import ContentItem
 
 
 class ContentEnricher:
-    """Enriches high-scoring content items with background knowledge."""
+    """Enriches high-scoring content items with background knowledge.
 
-    def __init__(self, ai_client: AIClient):
-        self.client = ai_client
+    Concept extraction can use an inexpensive screening client, while the
+    reader-facing write-up uses a dedicated enrichment client. Passing one
+    client keeps the historical behaviour for integrations and tests.
+    """
+
+    def __init__(
+        self,
+        concept_client: AIClient,
+        enrichment_client: Optional[AIClient] = None,
+    ):
+        self.concept_client = concept_client
+        self.enrichment_client = enrichment_client or concept_client
+        # Backward-compatible alias for callers that inspect ``client``.
+        self.client = self.enrichment_client
 
     def _get_concurrency(self) -> int:
         """Return the configured enrichment concurrency, clamped to 1 or above."""
@@ -117,7 +129,7 @@ class ContentEnricher:
         )
 
         try:
-            response = await self.client.complete(
+            response = await self.concept_client.complete(
                 system=CONCEPT_EXTRACTION_SYSTEM,
                 user=user_prompt,
             )
@@ -185,7 +197,7 @@ class ContentEnricher:
             web_context=web_context or "No web search results available.",
         )
 
-        response = await self.client.complete(
+        response = await self.enrichment_client.complete(
             system=CONTENT_ENRICHMENT_SYSTEM,
             user=user_prompt,
         )
@@ -240,7 +252,7 @@ class ContentEnricher:
         """Lightweight translation fallback: when full enrichment fails, at least
         translate the title and summary to Chinese so the item is not dropped."""
         try:
-            response = await self.client.complete(
+            response = await self.enrichment_client.complete(
                 system="You are a translator. Translate to Simplified Chinese. Return only valid JSON, no other text.",
                 user=(
                     f'Title: {item.title}\n'

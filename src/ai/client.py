@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types
 
 
-from ..models import AIConfig, AIProvider
+from ..models import AIConfig, AIProvider, ThinkingMode
 from rich import print as rich_print
 from .tokens import record_usage
 
@@ -218,6 +218,7 @@ class OpenAIClient(AIClient):
         self.temperature = config.temperature
         self.max_tokens = config.max_tokens
         self.provider = config.provider.value
+        self.thinking = config.thinking
         # Some newer models (e.g. Claude Opus 4.7 on Bedrock Converse) reject
         # `temperature`. We learn this on first 400 and stop sending it.
         self._supports_temperature = True
@@ -262,16 +263,24 @@ class OpenAIClient(AIClient):
         if self.provider in self._TEMP_CLAMP and temperature <= 0:
             temperature = 0.01
 
+        # DeepSeek ignores temperature when thinking is enabled. Do not send a
+        # misleading parameter in that mode; ``thinking: disabled`` continues
+        # to use the configured temperature just like the legacy chat model.
+        include_temperature = self._supports_temperature and not (
+            self.provider == AIProvider.DEEPSEEK.value
+            and self.thinking == ThinkingMode.ENABLED
+        )
+
         try:
             response = await self._do_request(
                 system=system,
                 user=user,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                include_temperature=self._supports_temperature,
+                include_temperature=include_temperature,
             )
         except Exception as exc:
-            if self._supports_temperature and self._is_temperature_unsupported(
+            if include_temperature and self._is_temperature_unsupported(
                 str(exc)
             ):
                 self._supports_temperature = False
@@ -314,6 +323,10 @@ class OpenAIClient(AIClient):
             request_kwargs["temperature"] = temperature
         if self.provider not in self._NO_RESPONSE_FORMAT:
             request_kwargs["response_format"] = {"type": "json_object"}
+        if self.provider == AIProvider.DEEPSEEK.value and self.thinking is not None:
+            request_kwargs["extra_body"] = {
+                "thinking": {"type": self.thinking.value}
+            }
         return await self.client.chat.completions.create(**request_kwargs)
 
     @staticmethod

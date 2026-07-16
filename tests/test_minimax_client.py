@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.ai.client import OpenAIClient, create_ai_client
-from src.models import AIConfig, AIProvider
+from src.models import AIConfig, AIProvider, ThinkingMode
 
 
 def _make_config(**overrides) -> AIConfig:
@@ -317,6 +317,55 @@ class TestTemperatureFallback:
 
         assert result == "ok"
         assert mock_create.call_count == 2
+
+
+class TestDeepSeekThinkingMode:
+    @staticmethod
+    def _make_response() -> MagicMock:
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = "{}"
+        response.usage.prompt_tokens = 1
+        response.usage.completion_tokens = 1
+        return response
+
+    def test_sends_disabled_thinking_in_openai_compatible_extra_body(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+        client = OpenAIClient(_make_config(
+            provider=AIProvider.DEEPSEEK,
+            model="deepseek-v4-flash",
+            api_key_env="DEEPSEEK_API_KEY",
+            thinking=ThinkingMode.DISABLED,
+        ))
+
+        with patch.object(
+            client.client.chat.completions, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = self._make_response()
+            asyncio.run(client.complete(system="s", user="u"))
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
+        assert call_kwargs["temperature"] == 0.3
+
+    def test_enabled_thinking_omits_temperature(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+        client = OpenAIClient(_make_config(
+            provider=AIProvider.DEEPSEEK,
+            model="deepseek-v4-pro",
+            api_key_env="DEEPSEEK_API_KEY",
+            thinking=ThinkingMode.ENABLED,
+        ))
+
+        with patch.object(
+            client.client.chat.completions, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = self._make_response()
+            asyncio.run(client.complete(system="s", user="u"))
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
+        assert "temperature" not in call_kwargs
 
 
 class TestFactoryFunction:

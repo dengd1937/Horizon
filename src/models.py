@@ -83,7 +83,7 @@ AI_PROVIDER_DEFAULTS = {
         "api_key_env": "MINIMAX_API_KEY",
     },
     AIProvider.DEEPSEEK: {
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "api_key_env": "DEEPSEEK_API_KEY",
     },
     AIProvider.OLLAMA: {
@@ -91,6 +91,34 @@ AI_PROVIDER_DEFAULTS = {
         "api_key_env": "",
     },
 }
+
+
+class ThinkingMode(str, Enum):
+    """DeepSeek reasoning mode for V4 models."""
+
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+
+
+class AIStageConfig(BaseModel):
+    """Optional AI configuration overrides for one processing stage.
+
+    Stages inherit every unspecified value from :class:`AIConfig`. Horizon
+    uses ``screening`` for scoring, topic deduplication, and concept queries,
+    and ``enrichment`` for the final reader-facing article write-up.
+    """
+
+    provider: Optional[AIProvider] = None
+    provider_chain: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key_env: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    throttle_sec: Optional[float] = None
+    analysis_concurrency: Optional[int] = None
+    enrichment_concurrency: Optional[int] = None
+    thinking: Optional[ThinkingMode] = None
 
 
 class AIConfig(BaseModel):
@@ -107,9 +135,22 @@ class AIConfig(BaseModel):
     analysis_concurrency: int = 1
     enrichment_concurrency: int = 1
     languages: List[str] = Field(default_factory=lambda: ["en"])
+    # Sent only to DeepSeek's OpenAI-compatible API. ``None`` preserves the
+    # provider default; set ``disabled`` for deterministic high-volume jobs.
+    thinking: Optional[ThinkingMode] = None
+    stages: Dict[str, AIStageConfig] = Field(default_factory=dict)
     # Azure OpenAI specific; required when provider == AZURE
     azure_endpoint_env: Optional[str] = None
     api_version: Optional[str] = None
+
+    def for_stage(self, stage: str) -> "AIConfig":
+        """Return this configuration with a named stage override applied."""
+        override = self.stages.get(stage)
+        if override is None:
+            return self
+        return self.model_copy(
+            update=override.model_dump(exclude_none=True)
+        )
 
 
 class GitHubSourceConfig(BaseModel):
