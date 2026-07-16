@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - "articles/**"
+      - "src/render/curated.py"
+      - "src/render/article_index_js.py"
+      - "src/render/site_css.py"
+      - "scripts/render_articles.py"
   workflow_dispatch:
 
 concurrency:
