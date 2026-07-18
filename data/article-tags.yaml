@@ -25,6 +25,8 @@ tags:
     description: 涉及支撑智能体持续执行的运行框架与工程机制。
   - name: 长时运行
     description: 涉及跨上下文窗口、长周期或持续自主执行。
+  - name: 推理模型
+    description: 涉及显式推理轨迹、推理投入控制或推断时扩展。
   - name: 工程实践
     description: 强调可复用的设计方法、开发流程或生产经验。
   - name: LangGraph
