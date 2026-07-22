@@ -178,6 +178,8 @@
   "site": {
     "enabled": false,
     "output_dir": "data/site",
+    "articles_source_dir": "articles",
+    "papers_source_dir": "papers",
     "base_url": null,
     "deploy_command": null,
     "max_media_mb": 50

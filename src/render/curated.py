@@ -227,7 +227,11 @@ def detail_page_html(
 ) -> str:
     parts = [
         '<div class="art-top"><span class="brand">HORIZON</span>'
-        '<a href="index.html">文章库 ↗</a></div>',
+        '<span class="mast-links">'
+        '<a href="../daily/index.html">日报</a>'
+        '<a href="index.html">文章库</a>'
+        '<a href="../papers/index.html">论文库</a>'
+        "</span></div>",
         '<p class="art-kicker">精选文章 · 转载长文</p>',
         f'<h1 class="art-title">{_e(article.title)}</h1>',
     ]
@@ -374,7 +378,10 @@ def index_page_html(articles: list[CuratedArticle]) -> str:
     body = (
         '<main data-article-library>'
         '<div class="art-top"><span class="brand">HORIZON</span>'
-        '<a href="../index.html">最新 ↗</a></div>'
+        '<span class="mast-links">'
+        '<a href="../daily/index.html">日报</a>'
+        '<a href="../papers/index.html">论文库</a>'
+        "</span></div>"
         "<h1 class=\"idx-title\">文章库</h1>"
         '<p class="idx-sub">人工精选 · 转载长文</p>'
         + controls

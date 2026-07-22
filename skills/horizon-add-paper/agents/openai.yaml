@@ -1,0 +1,4 @@
+interface:
+  display_name: "Horizon Add Papers"
+  short_description: "Close-read, preview, and add research papers to Horizon"
+  default_prompt: "Use $horizon-add-paper to close-read and locally preview this paper URL in Horizon."

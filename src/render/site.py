@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from ..models import ContentItem, SiteConfig
+from ..papers.contract import ResearchPaper, load_papers
 from ..scrapers.twitter_article import ARTICLE_MARKER
 from .article_html import article_to_html, article_to_text
 from .curated import CuratedArticle, count_recent, load_articles, render_curated
+from .papers import render_papers
 from .site_css import SITE_CSS
 
 logger = logging.getLogger(__name__)
@@ -127,6 +129,7 @@ class SiteRenderer:
         date: str,
         total_fetched: int,
         curated_articles: Optional[list[CuratedArticle]] = None,
+        research_papers: Optional[list[ResearchPaper]] = None,
     ) -> list[Path]:
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "daily").mkdir(parents=True, exist_ok=True)
@@ -137,6 +140,11 @@ class SiteRenderer:
             curated_articles
             if curated_articles is not None
             else load_articles(Path(self.config.articles_source_dir))
+        )
+        papers = (
+            research_papers
+            if research_papers is not None
+            else load_papers(Path(self.config.papers_source_dir))
         )
 
         digest = self.out / daily_digest_path(date)
@@ -163,6 +171,7 @@ class SiteRenderer:
         paths.append(root_index)
 
         paths.extend(render_curated(self.out, articles))
+        paths.extend(render_papers(self.out, papers))
 
         logger.info("Site rendered: %d page(s) under %s", len(paths), self.out)
         return paths
@@ -274,6 +283,7 @@ class SiteRenderer:
             '<div class="mast-top"><span class="brand">HORIZON</span>'
             '<span class="mast-links">'
             '<a href="../articles/index.html">文章库 ↗</a>'
+            '<a href="../papers/index.html">论文库 ↗</a>'
             '<a href="index.html">归档 ↗</a></span></div>\n'
             f"<h1>{day.month}月{day.day}日<small>{day.year} · 星期{weekday}</small></h1>\n"
             f'<p class="stats">从 {total_fetched} 条抓取中筛选 <b>{len(items)}</b> 条 · '
@@ -746,7 +756,11 @@ class SiteRenderer:
         back = f"{date}.html#{item_anchor(item, index)}"
         body = (
             '<div class="art-top"><span class="brand">HORIZON</span>'
-            f'<a href="{_e(back)}">← 返回 {date}</a></div>\n'
+            '<span class="mast-links">'
+            f'<a href="{_e(back)}">← 返回 {date}</a>'
+            '<a href="../articles/index.html">文章库</a>'
+            '<a href="../papers/index.html">论文库</a>'
+            "</span></div>\n"
             f'<p class="art-kicker">X ARTICLE · 已本地化 · {chars} 字 · {images} 图</p>\n'
             f'<h1 class="art-title">{_e(title)}</h1>\n'
             f'<p class="art-byline"><span>@{_e(item.author or "unknown")}</span>'
@@ -806,6 +820,7 @@ class SiteRenderer:
         body = (
             '<div class="art-top"><span class="brand">HORIZON</span>'
             '<span class="mast-links"><a href="../articles/index.html">文章库 ↗</a>'
+            '<a href="../papers/index.html">论文库 ↗</a>'
             '<a href="../index.html">最新 ↗</a></span></div>\n'
             '<h1 class="idx-title">归档</h1>\n'
             '<p class="idx-sub">内容与媒体已本地化 · 无需代理</p>\n'

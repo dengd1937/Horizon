@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from src.models import ContentItem, SiteConfig, SourceType
 from src.render.site import (
@@ -122,6 +123,7 @@ def _render(tmp_path, items=None):
         enabled=True,
         output_dir=str(tmp_path),
         articles_source_dir=str(tmp_path / "no-articles"),
+        papers_source_dir=str(tmp_path / "no-papers"),
     )
     renderer = SiteRenderer(cfg)
     return renderer.render(items or _six_shapes(), "2026-07-05", 18)
@@ -339,6 +341,7 @@ def test_article_card_and_page(tmp_path):
     # cover resolved with ../ prefix from articles/ subdir
     assert 'src="../assets/2026-07-05/cv.jpg"' in content
     assert 'href="2026-07-05.html#t-7"' in content
+    assert 'href="../papers/index.html">论文库</a>' in content
 
 
 def test_article_without_fulltext_links_to_x(tmp_path):
@@ -468,6 +471,32 @@ def test_digest_links_to_articles_library(tmp_path):
     assert 'href="../articles/index.html"' in digest
     assert "文章库 ↗" in digest
     assert "文章库本周" not in digest  # hidden when recent count is 0
+
+
+def test_site_renderer_builds_paper_library_and_links_global_navigation(tmp_path):
+    cfg = SiteConfig(
+        enabled=True,
+        output_dir=str(tmp_path),
+        articles_source_dir=str(tmp_path / "no-articles"),
+        papers_source_dir="papers",
+    )
+    paths = SiteRenderer(cfg).render(_six_shapes(), "2026-07-09", 18)
+
+    paper_index = tmp_path / "papers" / "index.html"
+    assert paper_index in paths
+    index_html = paper_index.read_text(encoding="utf-8")
+    assert index_html.count("data-paper-entry") == len(
+        list(Path("papers").glob("*.md"))
+    )
+
+    digest = (tmp_path / "daily" / "2026-07-09.html").read_text(encoding="utf-8")
+    archive = (tmp_path / "daily" / "index.html").read_text(encoding="utf-8")
+    article_index = (tmp_path / "articles" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'href="../papers/index.html">论文库 ↗</a>' in digest
+    assert 'href="../papers/index.html">论文库 ↗</a>' in archive
+    assert 'href="../papers/index.html">论文库</a>' in article_index
 
 
 def test_digest_shows_articles_weekly_count(tmp_path):

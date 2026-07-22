@@ -8,6 +8,10 @@ def test_article_publish_workflow_is_scoped_and_uses_cos():
     workflow = Path(".github/workflows/publish-articles.yml").read_text(encoding="utf-8")
 
     assert '"articles/**"' in workflow
+    assert '"papers/**"' in workflow
+    assert '"src/papers/**"' in workflow
+    assert '"src/render/papers.py"' in workflow
+    assert '"src/render/paper_index_js.py"' in workflow
     assert "branches:" in workflow
     assert "- main" in workflow
     assert "github.ref == 'refs/heads/main'" in workflow
@@ -21,6 +25,14 @@ def test_article_publish_workflow_is_scoped_and_uses_cos():
     assert "DEEPSEEK_API_KEY" not in workflow
     assert "EMAIL_PASSWORD" not in workflow
     assert "email_delivery_state" not in workflow
+
+
+def test_content_library_publish_script_renders_papers_before_deploy():
+    script = Path("scripts/render_articles.py").read_text(encoding="utf-8")
+
+    assert "load_papers" in script
+    assert "render_papers" in script
+    assert script.index("render_papers") < script.index("deploy_site(config.site)")
 
 
 def test_deploy_workflows_share_a_fail_closed_concurrency_boundary():

@@ -165,6 +165,8 @@ def test_detail_page_newest_has_no_newer(tmp_path):
     assert "<blockquote>" in html_
     assert ".prose img, .prose video" in html_
     assert "width: 100%; max-width: 100%; height: auto" in html_
+    assert 'href="../daily/index.html">日报</a>' in html_
+    assert 'href="../papers/index.html">论文库</a>' in html_
     # inline body image rewritten to ../assets/
     assert 'src="../assets/articles/overreacted-io-20260708-the-tides-of-tech/' in html_
 
@@ -273,6 +275,8 @@ def test_index_page_renders_progressive_filter_controls_and_safe_data():
     root = soup.select_one("[data-article-library]")
     controls = soup.select_one("[data-article-filter]")
     assert root is not None
+    assert soup.select_one('.art-top a[href="../daily/index.html"]') is not None
+    assert soup.select_one('.art-top a[href="../papers/index.html"]') is not None
     assert controls is not None and controls.has_attr("hidden")
     assert soup.select_one('input[type="search"][data-article-search]') is not None
     assert soup.select_one("[data-article-reset]").has_attr("hidden")

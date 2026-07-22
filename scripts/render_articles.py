@@ -1,4 +1,4 @@
-"""Render and publish curated articles without running the daily pipeline."""
+"""Render and publish the article and paper libraries without the daily pipeline."""
 
 import asyncio
 from pathlib import Path
@@ -6,6 +6,8 @@ from pathlib import Path
 from src.render.assets import MediaDownloader
 from src.render.curated import load_articles, localize_article_media, render_curated
 from src.render.deploy import deploy_site
+from src.render.papers import render_papers
+from src.papers.contract import load_papers
 from src.storage.manager import StorageManager
 
 
@@ -24,9 +26,13 @@ async def main() -> None:
         f"downloaded {downloaded} media file(s)."
     )
 
+    papers = load_papers(Path(config.site.papers_source_dir))
+    paper_paths = render_papers(Path(config.site.output_dir), papers)
+    print(f"Rendered {len(paper_paths)} paper library page(s).")
+
     deployed = await deploy_site(config.site)
     if deployed is False:
-        raise RuntimeError("curated article deployment failed")
+        raise RuntimeError("content library deployment failed")
 
 
 if __name__ == "__main__":
