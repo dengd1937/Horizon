@@ -7,6 +7,7 @@ from src.render.assets import MediaDownloader
 from src.render.curated import load_articles, localize_article_media, render_curated
 from src.render.deploy import deploy_site
 from src.render.papers import render_papers
+from src.render.site import backfill_paper_library_navigation
 from src.papers.contract import load_papers
 from src.storage.manager import StorageManager
 
@@ -29,6 +30,9 @@ async def main() -> None:
     papers = load_papers(Path(config.site.papers_source_dir))
     paper_paths = render_papers(Path(config.site.output_dir), papers)
     print(f"Rendered {len(paper_paths)} paper library page(s).")
+
+    migrated_pages = backfill_paper_library_navigation(Path(config.site.output_dir))
+    print(f"Backfilled paper navigation on {len(migrated_pages)} daily page(s).")
 
     deployed = await deploy_site(config.site)
     if deployed is False:

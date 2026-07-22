@@ -32,6 +32,10 @@ _LEGACY_X_ARTICLE_HREF_RE = re.compile(r'(href=["\'])articles/(\d+)\.html(["\'])
 _LEGACY_DAILY_BACK_HREF_RE = re.compile(
     r'(href=["\'])\.\./(\d{4}-\d{2}-\d{2}\.html(?:#[^"\']*)?)(["\'])'
 )
+_DAILY_ARTICLE_LIBRARY_LINK_RE = re.compile(
+    r'(<a href="\.\./articles/index\.html">文章库(?: ↗)?</a>)'
+)
+_DAILY_PAPER_LIBRARY_HREF = 'href="../papers/index.html"'
 _WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"]
 _TWEET_FOLD_CHAR_LIMIT = 240
 _TWEET_FOLD_NEWLINE_LIMIT = 4
@@ -55,6 +59,34 @@ def archive_index_path() -> Path:
 def root_index_path() -> Path:
     """Root landing page: redirects to the latest daily digest."""
     return Path("index.html")
+
+
+def backfill_paper_library_navigation(site_root: Path) -> list[Path]:
+    """Add the paper-library link to already-rendered daily pages.
+
+    The content-library workflow preserves deployed daily HTML instead of
+    rebuilding it from feed data.  This idempotent migration keeps those
+    historical pages aligned with the current global navigation.
+    """
+    daily_dir = site_root / "daily"
+    if not daily_dir.is_dir():
+        return []
+
+    updated: list[Path] = []
+    paper_link = '<a href="../papers/index.html">论文库 ↗</a>'
+    for page in sorted(daily_dir.glob("*.html")):
+        content = page.read_text(encoding="utf-8")
+        if _DAILY_PAPER_LIBRARY_HREF in content:
+            continue
+        migrated, count = _DAILY_ARTICLE_LIBRARY_LINK_RE.subn(
+            lambda match: match.group(1) + paper_link,
+            content,
+            count=1,
+        )
+        if count:
+            page.write_text(migrated, encoding="utf-8")
+            updated.append(page)
+    return updated
 
 _RT_SVG = (
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '

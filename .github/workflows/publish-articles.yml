@@ -12,6 +12,7 @@ on:
       - "src/render/article_index_js.py"
       - "src/render/papers.py"
       - "src/render/paper_index_js.py"
+      - "src/render/site.py"
       - "src/render/site_css.py"
       - "src/models.py"
       - "scripts/render_articles.py"

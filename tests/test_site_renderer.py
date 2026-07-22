@@ -8,10 +8,39 @@ from src.models import ContentItem, SiteConfig, SourceType
 from src.render.site import (
     SiteRenderer,
     archive_index_path,
+    backfill_paper_library_navigation,
     daily_article_path,
     daily_digest_path,
     root_index_path,
 )
+
+
+def test_backfill_paper_library_navigation_updates_old_daily_pages_once(tmp_path):
+    daily_dir = tmp_path / "daily"
+    daily_dir.mkdir()
+    digest = daily_dir / "2026-07-22.html"
+    digest.write_text(
+        '<span class="mast-links">'
+        '<a href="../articles/index.html">文章库 ↗</a>'
+        '<a href="index.html">归档 ↗</a></span>',
+        encoding="utf-8",
+    )
+    current = daily_dir / "2026-07-23.html"
+    current.write_text(
+        '<a href="../articles/index.html">文章库 ↗</a>'
+        '<a href="../papers/index.html">论文库 ↗</a>',
+        encoding="utf-8",
+    )
+    unrelated = daily_dir / "article-1.html"
+    unrelated.write_text('<a href="2026-07-22.html">返回</a>', encoding="utf-8")
+
+    assert backfill_paper_library_navigation(tmp_path) == [digest]
+    migrated = digest.read_text(encoding="utf-8")
+    assert (
+        '<a href="../articles/index.html">文章库 ↗</a>'
+        '<a href="../papers/index.html">论文库 ↗</a>'
+    ) in migrated
+    assert backfill_paper_library_navigation(tmp_path) == []
 
 
 def _item(tweet_id: str, title: str = "", **meta) -> ContentItem:
