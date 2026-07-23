@@ -234,6 +234,8 @@ def test_publisher_uploads_source_before_entry_points_and_deletes_exact_keys(
     assert "--force" in delete
     assert "--recursive" not in delete and "-r" not in delete
     assert all("--init-skip=true" in command for command in commands)
+    assert all("--log-path" in command for command in commands)
+    assert all("--disable-log" not in command for command in commands)
 
 
 def test_noop_marker_is_explicit_and_validated(tmp_path):

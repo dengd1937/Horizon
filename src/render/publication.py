@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import date as date_cls
 from pathlib import Path, PurePosixPath
@@ -511,7 +512,8 @@ class CosCliPublisher:
             "-e",
             self.endpoint,
             "--init-skip=true",
-            "--disable-log",
+            "--log-path",
+            str(Path(tempfile.gettempdir()) / "horizon-coscli.log"),
             "--process-log=false",
             "--fail-output=false",
         ]
@@ -639,7 +641,8 @@ class CosCliRestorer:
             "-e",
             self.endpoint,
             "--init-skip=true",
-            "--disable-log",
+            "--log-path",
+            str(Path(tempfile.gettempdir()) / "horizon-coscli.log"),
             "--process-log=false",
             "--fail-output=false",
         ]
