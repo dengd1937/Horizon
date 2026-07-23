@@ -83,5 +83,6 @@ jobs:
           if [ -f data/email_delivery_state.json ]; then
             coscli cp data/email_delivery_state.json \
               "$COS_STATE_BUCKET/.horizon-state/email_delivery_state.json" \
-              -i "$COS_SECRET_ID" -k "$COS_SECRET_KEY" -e "$COS_ENDPOINT" --acl private
+              -i "$COS_SECRET_ID" -k "$COS_SECRET_KEY" -e "$COS_ENDPOINT" \
+              --init-skip=true --acl private
           fi

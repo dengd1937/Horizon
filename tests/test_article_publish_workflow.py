@@ -65,6 +65,7 @@ def test_deploy_workflows_share_a_fail_closed_concurrency_boundary():
         assert "COS_STATE_BUCKET" in workflow
         assert "cos://signalfeed-state-1257788828" in workflow
         assert "COS_ENDPOINT" in workflow
+        assert "--init-skip=true" in workflow
         assert "scripts/restore_site_state.py" in workflow
         assert "scripts/publish_site.py" in workflow
 
