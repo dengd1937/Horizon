@@ -252,7 +252,9 @@ def test_optional_restore_ignores_only_not_found(monkeypatch, tmp_path):
     monkeypatch.setenv("COS_SECRET_KEY", "secret-key")
 
     def missing(command):
-        return subprocess.CompletedProcess(command, 1, "", "NoSuchKey")
+        return subprocess.CompletedProcess(
+            command, 1, "", "cos object not found: .horizon-state/releases/missing.json"
+        )
 
     restorer = CosCliRestorer(
         site_bucket="cos://site-bucket",

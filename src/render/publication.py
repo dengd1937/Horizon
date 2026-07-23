@@ -607,6 +607,7 @@ _NOT_FOUND_MARKERS = (
     "statuscode=404",
     "specified key does not exist",
     "object not exist",
+    "cos object not found",
 )
 
 
