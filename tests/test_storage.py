@@ -190,6 +190,7 @@ def test_save_and_load_run_items_round_trip(tmp_path):
 
     loaded, meta = storage.load_run_items("2026-07-05")
     assert meta["date"] == "2026-07-05"
+    assert meta["schema_version"] == 1
     assert meta["total_fetched"] == 18
     assert meta["generated_at"]
     assert len(loaded) == 2

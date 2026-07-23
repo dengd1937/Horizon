@@ -137,6 +137,26 @@ def test_download_idempotent_skips_existing(tmp_path):
     assert item2.metadata["asset_map"]["https://p/ok.jpg"].startswith("assets/")
 
 
+def test_download_reuses_manifest_known_asset_without_local_file(tmp_path):
+    url = "https://p/known.jpg"
+    key = f"assets/2026-07-05/{asset_filename(url)}"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("known remote assets must not be downloaded")
+
+    cfg = SiteConfig(enabled=True, output_dir=str(tmp_path))
+    downloader = MediaDownloader(
+        cfg,
+        transport=httpx.MockTransport(handler),
+        known_assets={url: key},
+    )
+    item = _item(media=[{"type": "photo", "thumbnail_url": url}])
+
+    assert asyncio.run(downloader.download_for_items([item], "2026-07-05")) == 0
+    assert item.metadata["asset_map"] == {url: key}
+    assert not (tmp_path / key).exists()
+
+
 def test_download_shared_url_downloaded_once_mapped_to_all(tmp_path):
     counter = {"n": 0}
 

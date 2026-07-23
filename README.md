@@ -353,6 +353,7 @@ Horizon can publish or deliver the generated briefing in several ways:
 | **MCP Server** | Exposes Horizon pipeline steps as tools so AI assistants can fetch, score, filter, enrich, summarize, and run the full workflow |
 
 For setup details, see the [Configuration Guide](docs/configuration.md). For MCP tool references and client setup, see [`src/mcp/README.md`](src/mcp/README.md) and [`src/mcp/integration.md`](src/mcp/integration.md).
+Production site operators can also review the [incremental publication and historical rebuild guide](docs/incremental-publication.md).
 
 ## Supported By
 

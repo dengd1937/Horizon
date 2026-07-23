@@ -252,6 +252,11 @@ def test_render_papers_writes_index_script_and_detail_pages(tmp_path):
     ]
 
     assert paths == expected
+    css = tmp_path / "assets" / "site" / "horizon.css"
+    assert css.is_file()
+    assert '<link rel="stylesheet" href="../assets/site/horizon.css">' in (
+        paper_dir / "index.html"
+    ).read_text(encoding="utf-8")
     assert all(path.is_file() for path in expected)
     assert all(
         "AI 解读" in path.read_text(encoding="utf-8") for path in expected[1:]

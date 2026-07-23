@@ -15,7 +15,7 @@ from latex2mathml import converter as latex_converter
 from ..papers.contract import ResearchPaper
 from .html_sanitizer import sanitize_html_fragment
 from .paper_index_js import PAPER_INDEX_JS
-from .site_css import SITE_CSS
+from .site_css import SITE_CSS_HREF, write_site_css
 
 _e = html.escape
 _BLOCK_MATH_RE = re.compile(r"(?<!\\)\$\$\s*(.+?)\s*\$\$", re.DOTALL)
@@ -249,11 +249,12 @@ def paper_index_page_html(papers: list[ResearchPaper]) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         '<meta http-equiv="Content-Security-Policy" '
         'content="default-src \'none\'; img-src \'self\' https: data:; '
-        'style-src \'unsafe-inline\'; '
+        'style-src \'self\' \'unsafe-inline\'; '
         f'script-src {script_policy}; base-uri \'none\'; form-action \'none\'">\n'
         '<link rel="icon" href="data:,">\n'
         '<meta name="description" content="Horizon 论文精读库：论文结论、证据边界与 AI 解读。">\n'
-        f"<title>Horizon · 论文库</title>\n<style>{SITE_CSS}</style>{script}\n</head>\n"
+        f"<title>Horizon · 论文库</title>\n"
+        f'<link rel="stylesheet" href="{SITE_CSS_HREF}">{script}\n</head>\n'
         f'<body>\n<div class="wrap paper-index-page">\n{body}\n</div>\n</body>\n</html>\n'
     )
 def paper_detail_page_html(paper: ResearchPaper) -> str:
@@ -355,12 +356,12 @@ def paper_detail_page_html(paper: ResearchPaper) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         '<meta http-equiv="Content-Security-Policy" '
         'content="default-src \'none\'; img-src \'self\' https: data:; '
-        'media-src \'self\' https:; style-src \'unsafe-inline\'; '
+        'media-src \'self\' https:; style-src \'self\' \'unsafe-inline\'; '
         'script-src \'none\'; base-uri \'none\'; form-action \'none\'">\n'
         '<link rel="icon" href="data:,">\n'
         f'<meta name="description" content="{_e(paper.summary)}">\n'
         f"<title>{_e(paper.title)} · Horizon 论文精读</title>\n"
-        f"<style>{SITE_CSS}</style>\n</head>\n"
+        f'<link rel="stylesheet" href="{SITE_CSS_HREF}">\n</head>\n'
         f'<body>\n<div class="wrap paper-page">\n{page_body}\n</div>\n</body>\n</html>\n'
     )
 
@@ -372,6 +373,7 @@ def render_papers(out_dir: Path, papers: list[ResearchPaper]) -> list[Path]:
     (paper_dir / "paper-index.js").write_text(PAPER_INDEX_JS, encoding="utf-8")
     index_path = paper_dir / "index.html"
     index_path.write_text(paper_index_page_html(papers), encoding="utf-8")
+    write_site_css(out_dir)
     paths = [index_path]
     for paper in papers:
         path = paper_dir / f"{paper.slug}.html"

@@ -13,7 +13,7 @@ import logging
 import re
 import socket
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Mapping, Optional, Union
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -125,10 +125,15 @@ class MediaDownloader:
         config: SiteConfig,
         transport: Optional[httpx.BaseTransport] = None,
         concurrency: int = 4,
+        known_assets: Optional[Mapping[str, Union[str, Iterable[str]]]] = None,
     ):
         self.config = config
         self._transport = transport  # tests inject httpx.MockTransport
         self._concurrency = max(concurrency, 1)
+        self._known_assets = {
+            url: {keys} if isinstance(keys, str) else set(keys)
+            for url, keys in (known_assets or {}).items()
+        }
 
     async def download_for_items(self, items: List[ContentItem], date: str) -> int:
         """Download all referenced media; write asset_map per item.
@@ -214,6 +219,9 @@ class MediaDownloader:
                 filename = asset_filename(url)
                 dest = assets_dir / filename
                 rel_path = (relative / filename).as_posix()
+                if rel_path in self._known_assets.get(url, set()):
+                    resolved[url] = rel_path
+                    return
                 if dest.exists():
                     resolved[url] = rel_path
                     return

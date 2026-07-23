@@ -163,8 +163,7 @@ def test_detail_page_newest_has_no_newer(tmp_path):
     # body markdown rendered
     assert "<ul>" in html_
     assert "<blockquote>" in html_
-    assert ".prose img, .prose video" in html_
-    assert "width: 100%; max-width: 100%; height: auto" in html_
+    assert '<link rel="stylesheet" href="../assets/site/horizon.css">' in html_
     assert 'href="../daily/index.html">日报</a>' in html_
     assert 'href="../papers/index.html">论文库</a>' in html_
     # inline body image rewritten to ../assets/
@@ -271,7 +270,8 @@ def test_index_page_renders_progressive_filter_controls_and_safe_data():
     html_ = index_page_html(articles)
     soup = BeautifulSoup(html_, "html.parser")
 
-    assert "[hidden] { display: none !important; }" in html_
+    assert '<link rel="stylesheet" href="../assets/site/horizon.css">' in html_
+    assert "style-src 'self' 'unsafe-inline'" in html_
     root = soup.select_one("[data-article-library]")
     controls = soup.select_one("[data-article-filter]")
     assert root is not None
@@ -363,6 +363,9 @@ def test_render_curated_empty_state(tmp_path):
     assert '<script defer src="article-index.js"></script>' not in idx
     assert "script-src 'none'" in idx
     assert paths == [tmp_path / "articles" / "index.html"]
+    css = tmp_path / "assets" / "site" / "horizon.css"
+    assert css.is_file()
+    assert "[hidden] { display: none !important; }" in css.read_text(encoding="utf-8")
 
 
 def test_count_recent_window():

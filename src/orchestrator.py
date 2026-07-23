@@ -1,6 +1,7 @@
 """Main orchestrator coordinating the entire workflow."""
 
 import asyncio
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -37,6 +38,13 @@ from .render.curated import (
     select_new_articles,
 )
 from .render.deploy import deploy_site
+from .render.publication import (
+    build_daily_release_manifest,
+    load_previous_manifest,
+    noop_marker_path,
+    pending_manifest_path,
+    write_noop_marker,
+)
 from .render.site import SiteRenderer
 
 
@@ -92,6 +100,14 @@ class HorizonOrchestrator:
         try:
             # 1. Determine time window
             since = self._determine_time_window(force_hours)
+            today = os.environ.get("HORIZON_REPORT_DATE") or datetime.now(
+                timezone.utc
+            ).strftime("%Y-%m-%d")
+            date.fromisoformat(today)
+            if self.config.site.enabled:
+                site_root = Path(self.config.site.output_dir)
+                pending_manifest_path(site_root, "daily").unlink(missing_ok=True)
+                noop_marker_path(site_root, "daily").unlink(missing_ok=True)
             self.console.print(f"📅 Fetching content since: {since.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
             # 2. Fetch content from all sources
@@ -99,6 +115,13 @@ class HorizonOrchestrator:
             self.console.print(f"📥 Fetched {len(all_items)} items from all sources\n")
 
             if not all_items:
+                if self.config.site.enabled:
+                    write_noop_marker(
+                        Path(self.config.site.output_dir),
+                        "daily",
+                        today,
+                        "no-content",
+                    )
                 self.console.print("[yellow]No new content found. Exiting.[/yellow]")
                 return
 
@@ -157,28 +180,44 @@ class HorizonOrchestrator:
             await self._enrich_important_items(important_items)
 
             # 7. Download referenced media locally for the reading site
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             curated_articles = None
+            previous_release = None
             if self.config.site.enabled:
+                site_root = Path(self.config.site.output_dir)
+                # Publication state is a safety boundary, not an optional media
+                # optimization. Invalid restored state must fail the run closed.
+                previous_release = load_previous_manifest(
+                    site_root, "daily", today
+                )
                 try:
-                    downloader = MediaDownloader(self.config.site)
+                    downloader = MediaDownloader(
+                        self.config.site,
+                        known_assets=(
+                            previous_release.media if previous_release else None
+                        ),
+                    )
                     n_media = await downloader.download_for_items(important_items, today)
                     if n_media:
                         self.console.print(f"🖼️  Downloaded {n_media} media file(s) for the site\n")
                     curated_articles = load_articles(
                         Path(self.config.site.articles_source_dir)
                     )
-                    n_article_media = await localize_article_media(
-                        curated_articles, downloader
-                    )
-                    if n_article_media:
-                        self.console.print(
-                            f"🖼️  Downloaded {n_article_media} curated article media file(s) for the site\n"
+                    # The legacy all-site deploy still needs library assets.  The
+                    # manifest-driven production workflow publishes libraries
+                    # independently and therefore skips this unbounded daily work.
+                    if self.config.site.deploy_command:
+                        n_article_media = await localize_article_media(
+                            curated_articles, downloader
                         )
+                        if n_article_media:
+                            self.console.print(
+                                f"🖼️  Downloaded {n_article_media} curated article media file(s) for the site\n"
+                            )
                 except Exception as e:
                     self.console.print(f"[yellow]⚠️  Media download failed: {e}[/yellow]\n")
 
             # 8. Persist this run's items as structured JSON (site data source)
+            run_path = None
             try:
                 run_path = self.storage.save_run_items(today, important_items, len(all_items))
                 self.console.print(f"💾 Saved run items to: {run_path}\n")
@@ -189,11 +228,32 @@ class HorizonOrchestrator:
             if self.config.site.enabled:
                 try:
                     renderer = SiteRenderer(self.config.site)
-                    pages = renderer.render(
+                    render = (
+                        renderer.render
+                        if self.config.site.deploy_command
+                        else renderer.render_daily
+                    )
+                    pages = render(
                         important_items,
                         today,
                         len(all_items),
                         curated_articles=curated_articles,
+                    )
+                    if run_path is None:
+                        raise RuntimeError(
+                            "structured run source was not saved; refusing to stage publication"
+                        )
+                    release = build_daily_release_manifest(
+                        Path(self.config.site.output_dir),
+                        today,
+                        pages,
+                        important_items,
+                        previous=previous_release,
+                    )
+                    release.write(
+                        pending_manifest_path(
+                            Path(self.config.site.output_dir), "daily"
+                        )
                     )
                     self.console.print(f"🌐 Site rendered: {pages[0]} (+{len(pages) - 1} pages)\n")
                 except Exception as e:

@@ -1,7 +1,7 @@
 """Tests for the static reading-site renderer (digest / article / index)."""
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from src.models import ContentItem, SiteConfig, SourceType
@@ -538,3 +538,29 @@ def test_digest_shows_articles_weekly_count(tmp_path):
     digest = (tmp_path / "daily" / "2026-07-09.html").read_text(encoding="utf-8")
     assert "文章库本周 +1" in digest  # fixture added 2026-07-08 within 7 days
     assert 'href="../articles/index.html">文章库本周 +1</a>' in digest
+
+
+def test_daily_render_needs_only_compact_manifest_not_historical_pages(tmp_path):
+    start = date(2025, 7, 23)
+    history = {
+        (start + timedelta(days=offset)).isoformat(): {"count": 1, "top": []}
+        for offset in range(365)
+    }
+    (tmp_path / "site_manifest.json").write_text(
+        json.dumps(history), encoding="utf-8"
+    )
+    cfg = SiteConfig(
+        enabled=True,
+        output_dir=str(tmp_path),
+        articles_source_dir=str(tmp_path / "no-articles"),
+    )
+
+    paths = SiteRenderer(cfg).render_daily([], "2026-07-22", 0)
+
+    assert tmp_path / "daily" / "2026-07-22.html" in paths
+    assert not (tmp_path / "daily" / "2025-07-23.html").exists()
+    assert not (tmp_path / "articles").exists()
+    assert not (tmp_path / "papers").exists()
+    digest = (tmp_path / "daily" / "2026-07-22.html").read_text(encoding="utf-8")
+    assert '<link rel="stylesheet" href="../assets/site/horizon.css">' in digest
+    assert (tmp_path / "assets" / "site" / "horizon.css").is_file()

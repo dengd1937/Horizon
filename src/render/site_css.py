@@ -1,8 +1,14 @@
 """Shared stylesheet for the static reading site (digest / article / index).
 
-Single source: the acceptance-approved design draft. Inlined into every
-generated page so each file is self-contained and offline-readable.
+Single source: the acceptance-approved design draft. Published at a stable
+site-relative path so style-only improvements apply to historical pages.
 """
+
+from pathlib import Path
+
+
+SITE_CSS_PATH = Path("assets/site/horizon.css")
+SITE_CSS_HREF = "../assets/site/horizon.css"
 
 SITE_CSS = """
 :root {
@@ -630,3 +636,11 @@ details.tweet-fold[open] > summary { border: 0; color: inherit; }
   .paper-footer { flex-direction: column; }
 }
 """
+
+
+def write_site_css(out_dir: Path) -> Path:
+    """Write the stable shared stylesheet used by every public HTML page."""
+    path = out_dir / SITE_CSS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(SITE_CSS.strip() + "\n", encoding="utf-8")
+    return path

@@ -122,7 +122,7 @@
     "articles_source_dir": "articles",
     "papers_source_dir": "papers",
     "base_url": "https://www.signalfeed.site",
-    "deploy_command": "coscli sync data/site/ cos://signalfeed-1257788828/ -r --delete --force --exclude \"^d/.*$\" -i \"$COS_SECRET_ID\" -k \"$COS_SECRET_KEY\" -e cos.ap-hongkong.myqcloud.com",
+    "deploy_command": null,
     "max_media_mb": 50
   }
 }

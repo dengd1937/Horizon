@@ -1,8 +1,8 @@
 """Static reading-site renderer: daily digest, article pages, archive index.
 
 Templates the acceptance-approved design draft with real item data. Every
-page is a self-contained HTML file (inline CSS, media served from the
-local assets directory via each item's asset_map).
+page references a shared stylesheet, with media served from the local assets
+directory via each item's asset_map.
 """
 
 import html
@@ -19,7 +19,7 @@ from ..scrapers.twitter_article import ARTICLE_MARKER
 from .article_html import article_to_html, article_to_text
 from .curated import CuratedArticle, count_recent, load_articles, render_curated
 from .papers import render_papers
-from .site_css import SITE_CSS
+from .site_css import SITE_CSS_HREF, write_site_css
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,10 @@ def root_index_path() -> Path:
 
 
 def backfill_paper_library_navigation(site_root: Path) -> list[Path]:
-    """Add the paper-library link to already-rendered daily pages.
+    """One-time migration: add the paper-library link to legacy daily pages.
 
-    The content-library workflow preserves deployed daily HTML instead of
-    rebuilding it from feed data.  This idempotent migration keeps those
-    historical pages aligned with the current global navigation.
+    Incremental production publishing never scans historical HTML. This helper
+    remains available for an explicit, locally prepared legacy migration.
     """
     daily_dir = site_root / "daily"
     if not daily_dir.is_dir():
@@ -163,11 +162,13 @@ class SiteRenderer:
         curated_articles: Optional[list[CuratedArticle]] = None,
         research_papers: Optional[list[ResearchPaper]] = None,
     ) -> list[Path]:
-        self.out.mkdir(parents=True, exist_ok=True)
-        (self.out / "daily").mkdir(parents=True, exist_ok=True)
-        self._migrate_legacy_paths()
-        paths: list[Path] = []
+        """Compatibility full-site render used by local previews and tests.
 
+        Production daily runs use :meth:`render_daily`; content-library
+        publishing renders its own independently-owned directories.
+        """
+        self.out.mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_paths()
         articles = (
             curated_articles
             if curated_articles is not None
@@ -177,6 +178,37 @@ class SiteRenderer:
             research_papers
             if research_papers is not None
             else load_papers(Path(self.config.papers_source_dir))
+        )
+
+        paths = self.render_daily(
+            items,
+            date,
+            total_fetched,
+            curated_articles=articles,
+        )
+        paths.extend(render_curated(self.out, articles))
+        paths.extend(render_papers(self.out, papers))
+        paths = list(dict.fromkeys(paths))
+
+        logger.info("Site rendered: %d page(s) under %s", len(paths), self.out)
+        return paths
+
+    def render_daily(
+        self,
+        items: List[ContentItem],
+        date: str,
+        total_fetched: int,
+        curated_articles: Optional[list[CuratedArticle]] = None,
+    ) -> list[Path]:
+        """Render only the current daily release and shared daily indexes."""
+        self.out.mkdir(parents=True, exist_ok=True)
+        (self.out / "daily").mkdir(parents=True, exist_ok=True)
+        paths: list[Path] = []
+
+        articles = (
+            curated_articles
+            if curated_articles is not None
+            else load_articles(Path(self.config.articles_source_dir))
         )
 
         digest = self.out / daily_digest_path(date)
@@ -194,6 +226,7 @@ class SiteRenderer:
                 paths.append(page)
 
         manifest = self._update_manifest(date, items)
+        paths.append(self.out / "site_manifest.json")
         archive = self.out / archive_index_path()
         archive.write_text(self._index_page(manifest), encoding="utf-8")
         paths.append(archive)
@@ -201,20 +234,17 @@ class SiteRenderer:
         root_index = self.out / root_index_path()
         root_index.write_text(self._root_index_page(manifest), encoding="utf-8")
         paths.append(root_index)
+        paths.append(write_site_css(self.out))
 
-        paths.extend(render_curated(self.out, articles))
-        paths.extend(render_papers(self.out, papers))
-
-        logger.info("Site rendered: %d page(s) under %s", len(paths), self.out)
+        logger.info("Daily site rendered: %d page(s) under %s", len(paths), self.out)
         return paths
 
     def _migrate_legacy_paths(self) -> None:
-        """Move pre-``/daily`` output into its new locations.
+        """Move pre-``/daily`` output into its new locations for full previews.
 
-        CI downloads the deployed site before rendering.  This makes the
-        migration safe for historical digest pages as well as today's output:
-        once moved locally, COS ``sync --delete`` removes only the old remote
-        objects after their replacements have been uploaded.
+        This compatibility path is intentionally absent from production daily
+        rendering. Remote history migrations must be prepared and reviewed as
+        explicit one-time operations.
         """
         daily_dir = self.out / "daily"
         daily_dir.mkdir(parents=True, exist_ok=True)
@@ -265,7 +295,8 @@ class SiteRenderer:
             '<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
             '<link rel="icon" href="data:,">\n'
-            f"<title>{_e(title)}</title>\n<style>{SITE_CSS}</style>\n</head>\n"
+            f"<title>{_e(title)}</title>\n"
+            f'<link rel="stylesheet" href="{SITE_CSS_HREF}">\n</head>\n'
             f'<body>\n<div class="wrap">\n{body}\n</div>\n</body>\n</html>\n'
         )
 

@@ -12,10 +12,13 @@ on:
       - "src/render/article_index_js.py"
       - "src/render/papers.py"
       - "src/render/paper_index_js.py"
+      - "src/render/publication.py"
       - "src/render/site.py"
       - "src/render/site_css.py"
       - "src/models.py"
       - "scripts/render_articles.py"
+      - "scripts/publish_site.py"
+      - "scripts/restore_site_state.py"
   workflow_dispatch:
 
 concurrency:
@@ -28,6 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      COS_SITE_BUCKET: cos://signalfeed-1257788828
+      COS_STATE_BUCKET: ${{ vars.COS_STATE_BUCKET || 'cos://signalfeed-state-1257788828' }}
+      COS_ENDPOINT: cos.ap-hongkong.myqcloud.com
 
     steps:
       - name: Checkout code
@@ -55,20 +62,31 @@ jobs:
           chmod +x "$HOME/.local/bin/coscli"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Preserve the daily section, root redirect, and historical media before
-      # the configured COS sync applies its --delete migration policy. The d/
-      # prefix is excluded because it serves permanent redirects for old URLs.
-      - name: Pull deployed site state
+      - name: Restore content-library publication state
+        env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+        run: uv run python scripts/restore_site_state.py libraries
+
+      # One-time cutover path: when no release manifest exists yet, restore only
+      # curated-article media (never the growing daily archive). The renderer
+      # turns these files into a local baseline manifest before publishing.
+      - name: Bootstrap existing content media
         env:
           COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
           COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
         run: |
-          mkdir -p data/site
-          coscli sync "cos://signalfeed-1257788828/" data/site/ -r --exclude "^d/.*$" \
-            -i "$COS_SECRET_ID" -k "$COS_SECRET_KEY" -e cos.ap-hongkong.myqcloud.com
+          if [ ! -f data/site/.horizon-state/releases/libraries.json ]; then
+            mkdir -p data/site/assets/articles
+            coscli cp "$COS_SITE_BUCKET/assets/articles/" data/site/assets/articles/ -r \
+              -i "$COS_SECRET_ID" -k "$COS_SECRET_KEY" -e "$COS_ENDPOINT"
+          fi
 
-      - name: Render and publish content libraries
+      - name: Render content libraries
+        run: uv run python scripts/render_articles.py
+
+      - name: Publish incremental content-library release
         env:
           COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
           COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
-        run: uv run python scripts/render_articles.py
+        run: uv run python scripts/publish_site.py libraries

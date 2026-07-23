@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -192,7 +193,9 @@ def test_run_applies_balanced_digest_before_enrichment(tmp_path, monkeypatch) ->
     assert enriched_ids == ["ai"]
 
 
-def test_daily_run_keeps_curated_media_localization(tmp_path, monkeypatch) -> None:
+def test_daily_run_does_not_rerender_or_localize_content_libraries(
+    tmp_path, monkeypatch
+) -> None:
     articles_dir = Path(__file__).parent / "fixtures" / "articles"
     config = Config(
         ai=AIConfig(
@@ -209,7 +212,13 @@ def test_daily_run_keeps_curated_media_localization(tmp_path, monkeypatch) -> No
             articles_source_dir=str(articles_dir),
         ),
     )
-    storage = SimpleNamespace()
+    def save_run_items(release, items, total_fetched):  # type: ignore[no-untyped-def]
+        path = tmp_path / "runs" / f"{release}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    storage = SimpleNamespace(save_run_items=save_run_items)
     orchestrator = HorizonOrchestrator(config, storage)
     item = make_item("daily", 9.0, "ai")
 
@@ -223,11 +232,7 @@ def test_daily_run_keeps_curated_media_localization(tmp_path, monkeypatch) -> No
         return None
 
     async def localize(articles, downloader):  # type: ignore[no-untyped-def]
-        article = articles[0]
-        article.asset_map[article.cover] = (
-            f"assets/articles/{article.slug}/cover.jpg"
-        )
-        return 0
+        raise AssertionError("daily runs must not localize curated article media")
 
     monkeypatch.setattr(orchestrator, "fetch_all_sources", fetch_all_sources)
     monkeypatch.setattr(orchestrator, "_analyze_content", identity)
@@ -235,17 +240,22 @@ def test_daily_run_keeps_curated_media_localization(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(orchestrator, "_expand_twitter_discussion", no_op)
     monkeypatch.setattr(orchestrator, "_enrich_important_items", no_op)
     monkeypatch.setattr("src.orchestrator.localize_article_media", localize)
+    monkeypatch.setenv("HORIZON_REPORT_DATE", "2026-07-22")
 
     asyncio.run(orchestrator.run())
 
-    detail = (
-        tmp_path
-        / "site"
-        / "articles"
-        / "overreacted-io-20260708-the-tides-of-tech.html"
-    ).read_text(encoding="utf-8")
-    assert (
-        '../assets/articles/overreacted-io-20260708-the-tides-of-tech/cover.jpg'
-        in detail
+    assert (tmp_path / "site" / "daily" / "2026-07-22.html").is_file()
+    assert not (tmp_path / "site" / "articles").exists()
+    assert not (tmp_path / "site" / "papers").exists()
+    release = json.loads(
+        (
+            tmp_path
+            / "site"
+            / ".horizon-state"
+            / "pending"
+            / "daily.json"
+        ).read_text(encoding="utf-8")
     )
-    assert "https://media.example/overreacted-cover.jpg" not in detail
+    assert release["release"] == "2026-07-22"
+    assert release["renderer_version"] == 2
+    assert release["data_schema_version"] == 1

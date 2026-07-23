@@ -18,6 +18,7 @@ from ..models import Config, ContentItem
 # (ASCII letters, digits, underscore; must not start with a digit).
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+RUN_SCHEMA_VERSION = 1
 
 
 def _expand_env_vars(value: Any) -> Any:
@@ -231,6 +232,7 @@ class StorageManager:
         """
         filepath = self.runs_dir / f"{date}.json"
         payload = {
+            "schema_version": RUN_SCHEMA_VERSION,
             "date": date,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "total_fetched": total_fetched,
@@ -250,6 +252,9 @@ class StorageManager:
             return None
         with open(filepath, "r", encoding="utf-8") as f:
             payload = json.load(f)
+        schema_version = payload.get("schema_version", 0)
+        if schema_version not in {0, RUN_SCHEMA_VERSION}:
+            raise ValueError(f"unsupported run schema version: {schema_version}")
         items = [ContentItem.model_validate(raw) for raw in payload.get("items", [])]
         meta = {k: v for k, v in payload.items() if k != "items"}
         return items, meta

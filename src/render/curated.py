@@ -28,7 +28,7 @@ from ..articles.contract import (
 from .assets import MediaDownloader
 from .article_index_js import ARTICLE_INDEX_JS
 from .html_sanitizer import sanitize_html_fragment
-from .site_css import SITE_CSS
+from .site_css import SITE_CSS_HREF, write_site_css
 
 _e = html.escape
 
@@ -202,10 +202,11 @@ def _page(title: str, body: str, *, script_src: Optional[str] = None) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         '<meta http-equiv="Content-Security-Policy" '
         'content="default-src \'none\'; img-src \'self\' https: data:; '
-        'media-src \'self\' https:; style-src \'unsafe-inline\'; '
+        'media-src \'self\' https:; style-src \'self\' \'unsafe-inline\'; '
         f'script-src {script_policy}; base-uri \'none\'; form-action \'none\'">\n'
         '<link rel="icon" href="data:,">\n'
-        f"<title>{_e(title)}</title>\n<style>{SITE_CSS}</style>{script}\n</head>\n"
+        f"<title>{_e(title)}</title>\n"
+        f'<link rel="stylesheet" href="{SITE_CSS_HREF}">{script}\n</head>\n'
         f'<body>\n<div class="wrap">\n{body}\n</div>\n</body>\n</html>\n'
     )
 
@@ -404,6 +405,7 @@ def render_curated(out_dir: Path, articles: list[CuratedArticle]) -> list[Path]:
     """Render detail + index pages under ``out_dir/articles/``."""
     arts_dir = out_dir / "articles"
     arts_dir.mkdir(parents=True, exist_ok=True)
+    write_site_css(out_dir)
     paths: list[Path] = []
 
     (arts_dir / "article-index.js").write_text(ARTICLE_INDEX_JS, encoding="utf-8")
